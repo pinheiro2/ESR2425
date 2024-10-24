@@ -11,12 +11,12 @@ import (
 )
 
 func main() {
-	// Define a flag para receber a porta como argumento
+	// Define uma flag para receber a porta como argumento
 	port := flag.String("port", "9000", "Porta na qual o nó vai escutar")
 	flag.Parse()
 
 	// Inicia o servidor na porta recebida como argumento
-	go startServer(*port)
+	go startUDPServer(*port)
 
 	// Dá tempo para o servidor iniciar
 	time.Sleep(1 * time.Second)
@@ -27,68 +27,63 @@ func main() {
 	targetNode, _ := reader.ReadString('\n')
 	targetNode = strings.TrimSpace(targetNode)
 
-	// Se o usuário forneceu um endereço, tenta se conectar ao nó
+	// Se o usuário forneceu um endereço, tenta enviar dados para o nó
 	if targetNode != "" {
-		startClient(targetNode)
+		startUDPClient(targetNode)
 	}
 
-	// Mantém o nó ativo para aceitar conexões
+	// Mantém o nó ativo para aceitar mensagens
 	select {}
 }
 
-// Função que inicia o servidor TCP
-func startServer(port string) {
+// Função que inicia o servidor UDP
+func startUDPServer(port string) {
 	address := ":" + port
-	// Escuta na porta especificada
-	listener, err := net.Listen("tcp", address)
+	// Cria um listener UDP
+	conn, err := net.ListenPacket("udp", address)
 	if err != nil {
 		fmt.Println("Erro ao iniciar o servidor na porta", port, ":", err)
 		os.Exit(1)
 	}
-	defer listener.Close()
-	fmt.Println("Servidor iniciado e escutando na porta", port)
-
-	// Aceitar conexões
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Println("Erro ao aceitar conexão:", err)
-			continue
-		}
-		// Inicia uma Goroutine para lidar com cada conexão
-		go handleConnection(conn)
-	}
-}
-
-// Função para tratar a conexão recebida no servidor
-func handleConnection(conn net.Conn) {
 	defer conn.Close()
+	fmt.Println("Servidor UDP iniciado e escutando na porta", port)
 
-	// Cria um leitor para a conexão
-	reader := bufio.NewReader(conn)
+	buf := make([]byte, 1024)
 	for {
-		// Lê a mensagem recebida do cliente
-		message, err := reader.ReadString('\n')
+		// Lê mensagens recebidas no servidor
+		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
 			fmt.Println("Erro ao ler mensagem:", err)
-			break
+			continue
 		}
-		message = strings.TrimSpace(message)
-		fmt.Println("Servidor recebeu:", message)
 
-		// Responde com "HELLO" se a mensagem foi recebida
+		message := strings.TrimSpace(string(buf[:n]))
+		fmt.Printf("Servidor recebeu de %s: %s\n", addr.String(), message)
+
+		// Responde com "HELLO" se a mensagem for "HELLO"
+		var response string
 		if message == "HELLO" {
-			conn.Write([]byte("HELLO\n"))
+			response = "HELLO\n"
 		} else {
-			conn.Write([]byte("Mensagem recebida!\n"))
+			response = "Mensagem recebida!\n"
 		}
+
+		// Envia resposta ao cliente
+		conn.WriteTo([]byte(response), addr)
 	}
 }
 
-// Função que inicia o cliente TCP e se conecta a outro nó
-func startClient(targetNode string) {
-	// Conecta ao nó especificado
-	conn, err := net.Dial("tcp", targetNode)
+// Função que inicia o cliente UDP e envia mensagens a outro nó
+func startUDPClient(targetNode string) {
+	// Resolve o endereço do nó alvo
+	addr, err := net.ResolveUDPAddr("udp", targetNode)
+	if err != nil {
+		fmt.Println("Erro ao resolver endereço do nó:", err)
+		return
+	}
+
+	// Cria uma conexão UDP para enviar/receber pacotes
+	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
 		fmt.Println("Erro ao conectar ao nó:", err)
 		return
@@ -97,15 +92,15 @@ func startClient(targetNode string) {
 
 	// Usa uma Goroutine para escutar respostas do nó (modo full-duplex)
 	go func() {
-		reader := bufio.NewReader(conn)
+		buf := make([]byte, 1024)
 		for {
 			// Lê a resposta do nó
-			response, err := reader.ReadString('\n')
+			n, _, err := conn.ReadFromUDP(buf)
 			if err != nil {
 				fmt.Println("Erro ao ler do nó:", err)
 				return
 			}
-			fmt.Println("Cliente recebeu:", strings.TrimSpace(response))
+			fmt.Println("Cliente recebeu:", strings.TrimSpace(string(buf[:n])))
 		}
 	}()
 
@@ -118,6 +113,7 @@ func startClient(targetNode string) {
 	for {
 		// Lê o que o usuário digitar e envia ao nó
 		fmt.Print("Digite mensagem para enviar: ")
+
 		userInput, _ := inputReader.ReadString('\n')
 		userInput = strings.TrimSpace(userInput)
 		if userInput == "exit" {
