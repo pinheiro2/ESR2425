@@ -1,11 +1,21 @@
 n1: n2 n3
-n2: n1 n4 n5
-n3: n1 n5 n8 
-n4: n2 n6 
-n5: n2 n3 n6 n7 n8 
-n6: n4 n5 n7 n9 n10 
-n7: n5 n6 n10 
-n8: n3 n5 n10 n11 
-n9: n6
-n10: n6 n7 n8 
-n11: n8
+n2: n1 n5 n9 n6
+n3: n1 n5 n11
+n5: n2 n3 n6 n7
+n6: n5 n7 n9 n10 n2
+n7: n5 n6 n10 n11
+n9: n6 n7 n2
+n10: n6 n7
+n11: n3 n7
+
+-----------------------
+
+S1: O1 O2
+O1: S1 O3 O6 O4
+O2: S1 O3 O8
+O3: O1 O2 O4 O5
+O4: O3 O5 O6 O7 O2
+O5: O3 O4 O7 O8
+O6: O4 O5 O2
+O7: O4 O5
+O8: O2 O5
