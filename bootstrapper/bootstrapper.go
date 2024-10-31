@@ -3,21 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 )
 
 func readConfig(result map[string][]string) {
-	// Abrir o ficheiro JSON
-	file, err := os.Open("config.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file.Close()
-
-	// Ler o conteúdo do ficheiro
-	byteValue, err := ioutil.ReadAll(file)
+	// Ler o conteúdo do ficheiro diretamente usando os.ReadFile
+	byteValue, err := os.ReadFile("config.json")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,7 +26,7 @@ func readConfig(result map[string][]string) {
 }
 
 func main() {
-	//result é a estrutura com informação da rede
+	// result é a estrutura com informação da rede
 	var result map[string][]string
 	readConfig(result)
 }
