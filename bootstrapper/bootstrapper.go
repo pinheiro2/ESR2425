@@ -9,22 +9,35 @@ import (
 )
 
 // Função para ler o arquivo de configuração JSON
-func readConfig() map[string][]string {
+func readConfig() (map[string][]string, map[string]string) {
 	byteValue, err := os.ReadFile("config.json")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Erro ao ler o arquivo de configuração: %v\n", err)
 	}
 
-	var result map[string][]string
+	// Estrutura para armazenar o mapeamento
+	var result struct {
+		Neighbors map[string][]string `json:"neighbors"`
+		Addresses map[string]string   `json:"addresses"`
+	}
+
+	// Fazer unmarshal do JSON
 	if err := json.Unmarshal(byteValue, &result); err != nil {
-		log.Fatal(err)
+		log.Fatalf("Erro ao desserializar o JSON: %v\n", err)
 	}
 
-	return result
+	// Verificar se os mapas foram carregados corretamente
+	if result.Neighbors == nil || result.Addresses == nil {
+		log.Fatal("Erro: 'neighbors' ou 'addresses' não encontrados na configuração.")
+	}
+
+	fmt.Printf("Configuração lida do arquivo:\nVizinhos: %v\nEndereços: %v\n\n", result.Neighbors, result.Addresses)
+
+	return result.Neighbors, result.Addresses
 }
 
 // Função para lidar com cada conexão TCP
-func handleConnection(conn net.Conn, networkData map[string][]string) {
+func handleConnection(conn net.Conn, networkData map[string][]string, addressMap map[string]string) {
 	defer conn.Close()
 
 	// Buffer para ler o nome do nó enviado pelo cliente
@@ -39,12 +52,22 @@ func handleConnection(conn net.Conn, networkData map[string][]string) {
 	nodeName := string(buffer[:n])
 
 	// Buscar a lista de vizinhos para o nome do nó
-	neighbors, exists := networkData[nodeName]
+	neighborNames, exists := networkData[nodeName]
 	if !exists {
-		neighbors = []string{} // Caso o nome não exista no mapa, retornar uma lista vazia
+		neighborNames = []string{} // Caso o nome não exista no mapa, retornar uma lista vazia
 	}
 
-	// Serializar a lista de vizinhos em JSON
+	// Montar um mapa nome -> IP para os vizinhos
+	neighbors := make(map[string]string)
+	for _, neighborName := range neighborNames {
+		if ip, ok := addressMap[neighborName]; ok {
+			neighbors[neighborName] = ip
+		} else {
+			log.Printf("Aviso: IP para o nó %s não encontrado em 'addresses'.\n", neighborName)
+		}
+	}
+
+	// Serializar o mapa de vizinhos em JSON
 	response, err := json.Marshal(neighbors)
 	if err != nil {
 		log.Printf("Erro ao serializar resposta: %v\n", err)
@@ -62,8 +85,8 @@ func handleConnection(conn net.Conn, networkData map[string][]string) {
 }
 
 func main() {
-	// Carregar o mapa de configuração da rede
-	networkData := readConfig()
+	// Carregar o mapa de configuração da rede e os endereços IP dos nós
+	networkData, addressMap := readConfig()
 
 	// Iniciar o servidor TCP na porta 8080
 	listener, err := net.Listen("tcp", ":8080")
@@ -83,6 +106,6 @@ func main() {
 		}
 
 		// Iniciar uma nova goroutine para tratar cada conexão
-		go handleConnection(conn, networkData)
+		go handleConnection(conn, networkData, addressMap)
 	}
 }

@@ -8,11 +8,11 @@ import (
 	"net"
 )
 
-// Estrutura para armazenar informações do nó, incluindo os vizinhos
+// Estrutura para armazenar informações do nó
 type Node struct {
-	Name      string              // Nome do nó
-	Neighbors map[string][]string // Mapa de vizinhos, onde cada chave é um nome de nó e o valor é uma lista de IPs
-	Port      int                 // Porta UDP que o nó usará
+	Name      string            // Nome do nó
+	Neighbors map[string]string // Mapa de vizinhos: chave é o nome do nó e valor é o IP
+	Port      int               // Porta UDP que o nó usará
 }
 
 // Função para inicializar o nó e obter a lista de vizinhos
@@ -30,24 +30,24 @@ func (node *Node) initialize(bootstrapAddress string) {
 		log.Fatal("Erro ao enviar nome do nó:", err)
 	}
 
-	// Receber a lista de vizinhos
+	// Receber a lista de vizinhos (mapa de nome -> IP) em JSON
 	buffer := make([]byte, 4096)
 	n, err := conn.Read(buffer)
 	if err != nil {
 		log.Fatal("Erro ao ler resposta do bootstrapper:", err)
 	}
 
-	// Deserializar a resposta JSON para obter a lista de vizinhos
-	var neighbors []string
+	// Deserializar a resposta JSON para obter o mapa de vizinhos
+	var neighbors map[string]string
 	if err := json.Unmarshal(buffer[:n], &neighbors); err != nil {
 		log.Fatal("Erro ao desserializar resposta:", err)
 	}
 
-	// Armazenar os vizinhos no mapa de vizinhança do nó
-	node.Neighbors[node.Name] = neighbors
+	// Armazenar os vizinhos na estrutura do nó
+	node.Neighbors = neighbors
 
 	// Exibir os vizinhos recebidos
-	fmt.Printf("Nó %s - Vizinhos armazenados: %v\n", node.Name, node.Neighbors[node.Name])
+	fmt.Printf("Nó %s - Vizinhos armazenados: %v\n", node.Name, node.Neighbors)
 }
 
 // Função para iniciar um listener UDP na porta especificada
@@ -99,7 +99,7 @@ func main() {
 	// Inicializar a estrutura do nó com a porta especificada
 	node := Node{
 		Name:      *nodeName,
-		Neighbors: make(map[string][]string),
+		Neighbors: make(map[string]string),
 		Port:      *port,
 	}
 
@@ -109,6 +109,6 @@ func main() {
 	// Iniciar o listener UDP em uma goroutine
 	go node.startUDPListener()
 
-	// Manter o programa ativo (poderia ser substituído por outras operações do nó)
+	// Manter o programa ativo
 	select {} // Aguarda indefinidamente
 }
