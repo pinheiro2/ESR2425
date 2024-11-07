@@ -2,59 +2,66 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os/exec"
+	"time"
 
 	"github.com/pion/rtp"
 )
 
-func main() {
-	// Set up UDP listener for RTP packets on port 5004
-	addr := net.UDPAddr{
-		Port: 5004,
-		IP:   net.ParseIP("localhost"),
+func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
+	serverAddr := net.UDPAddr{
+		Port: port,
+		IP:   net.ParseIP(serverIP),
 	}
-	conn, err := net.ListenUDP("udp", &addr)
+	conn, err := net.DialUDP("udp", nil, &serverAddr)
 	if err != nil {
-		log.Fatalf("Failed to listen on UDP port: %v", err)
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
-	defer conn.Close()
 
-	// Start ffplay to display the video frames
+	// Send initial connection request
+	_, err = conn.Write([]byte("CONNECT"))
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send connection request: %w", err)
+	}
+	fmt.Println("Sent connection request to server")
+	return conn, nil
+}
+
+func startFFPlay() (*exec.Cmd, io.WriteCloser, error) {
 	ffplayCmd := exec.Command("ffplay", "-f", "mjpeg", "-i", "pipe:0")
 	ffplayIn, err := ffplayCmd.StdinPipe()
 	if err != nil {
-		log.Fatalf("Failed to create ffplay input pipe: %v", err)
+		return nil, nil, fmt.Errorf("failed to create ffplay input pipe: %w", err)
 	}
-	defer ffplayIn.Close()
 
-	// Start ffplay
 	if err := ffplayCmd.Start(); err != nil {
-		log.Fatalf("Failed to start ffplay: %v", err)
+		return nil, nil, fmt.Errorf("failed to start ffplay: %w", err)
 	}
 
-	// Buffer to hold incoming RTP packets
+	return ffplayCmd, ffplayIn, nil
+}
+
+func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser) {
 	packet := &rtp.Packet{}
 
 	for {
-		// Buffer for receiving packet data
-		buf := make([]byte, 150000) // typical MTU size
+		buf := make([]byte, 150000)
 
-		// Read packet from UDP connection
 		n, _, err := conn.ReadFrom(buf)
 		if err != nil {
 			log.Printf("Error reading from UDP: %v", err)
 			continue
 		}
 
-		// Unmarshal the RTP packet
 		if err := packet.Unmarshal(buf[:n]); err != nil {
 			log.Printf("Failed to unmarshal RTP packet: %v", err)
 			continue
 		}
 
-		// Write the payload (JPEG frame) to ffplay
 		_, err = ffplayIn.Write(packet.Payload)
 		if err != nil {
 			log.Printf("Failed to write to ffplay: %v", err)
@@ -62,9 +69,25 @@ func main() {
 		}
 
 		fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
+		time.Sleep(time.Millisecond * 33)
 	}
+}
 
-	// Wait for ffplay to finish
+func main() {
+	conn, err := setupUDPConnection("localhost", 5004)
+	if err != nil {
+		log.Fatalf("Error setting up UDP connection: %v", err)
+	}
+	defer conn.Close()
+
+	ffplayCmd, ffplayIn, err := startFFPlay()
+	if err != nil {
+		log.Fatalf("Error starting ffplay: %v", err)
+	}
+	defer ffplayIn.Close()
+
+	receiveAndDisplayRTPPackets(conn, ffplayIn)
+
 	if err := ffplayCmd.Wait(); err != nil {
 		log.Fatalf("ffplay exited with error: %v", err)
 	}
