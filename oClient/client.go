@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -68,13 +69,18 @@ func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser) {
 			break
 		}
 
-		// fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
+		fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
 		time.Sleep(time.Millisecond * 33)
 	}
 }
 
 func main() {
-	conn, err := setupUDPConnection("localhost", 5004)
+	// Define the port flag and parse the command-line arguments
+	port := flag.Int("port", 5004, "UDP port to connect to on the server")
+	flag.Parse()
+
+	// Set up the UDP connection to the specified port
+	conn, err := setupUDPConnection("localhost", *port)
 	if err != nil {
 		log.Fatalf("Error setting up UDP connection: %v", err)
 	}
