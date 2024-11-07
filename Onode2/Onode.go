@@ -59,7 +59,7 @@ func (node *Node) initialize(bootstrapAddress string) {
 	fmt.Printf("Node %s (Type: %s) - Stored neighbors: %v\n", node.Name, node.Type, node.Neighbors)
 }
 
-// Starts ffmpeg to output video frames as JPEGs
+// Starts ffmpeg to output video frames as JPEGs for Content Server
 func startFFmpeg() (*bufio.Reader, func(), error) {
 	ffmpegCmd := exec.Command("ffmpeg",
 		"-i", "video_min_360.mp4", // Input file
@@ -95,6 +95,7 @@ func setupUDPListener(port int) (*net.UDPConn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to set up UDP listener: %w", err)
 	}
+	log.Printf("Listening for UDP connections on port %d\n", port)
 	return conn, nil
 }
 
@@ -108,6 +109,9 @@ func handleClientConnections(conn *net.UDPConn) {
 			continue
 		}
 
+		// Log every client connection attempt
+		log.Printf("Connection attempt from client at %s", clientAddr)
+
 		// Add the client address to the list if it's new
 		clientsMu.Lock()
 		found := false
@@ -119,13 +123,15 @@ func handleClientConnections(conn *net.UDPConn) {
 		}
 		if !found {
 			clients = append(clients, clientAddr)
-			fmt.Printf("New client connected: %s\n", clientAddr)
+			log.Printf("New client connected from %s", clientAddr)
+		} else {
+			log.Printf("Existing client %s reconnected", clientAddr)
 		}
 		clientsMu.Unlock()
 	}
 }
 
-// Sends RTP packets to connected clients
+// Sends RTP packets to connected clients with logging
 func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader) {
 	seqNumber := uint16(0)
 	ssrc := uint32(1234)
@@ -166,13 +172,61 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader) {
 			_, err := conn.WriteTo(packetData, clientAddr)
 			if err != nil {
 				log.Printf("Failed to send packet to %v: %v", clientAddr, err)
+			} else {
+				// Log packet details after successful send
+				log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+					clientAddr, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
 			}
 		}
 		clientsMu.Unlock()
 
-		// fmt.Printf("Sent RTP packet: Seq=%d, Timestamp=%d\n", seqNumber, packet.Header.Timestamp)
 		seqNumber++
 		time.Sleep(time.Millisecond * 33) // Approx. 30 FPS
+	}
+}
+
+func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
+	serverAddr := net.UDPAddr{
+		Port: port,
+		IP:   net.ParseIP(serverIP),
+	}
+	conn, err := net.DialUDP("udp", nil, &serverAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
+	}
+
+	// Send initial connection request
+	_, err = conn.Write([]byte("CONNECT"))
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send connection request: %w", err)
+	}
+	fmt.Println("Sent connection request to server")
+	return conn, nil
+}
+
+// Forwards data from content server to connected clients (used by POP)
+func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
+	buf := make([]byte, 150000)
+	for {
+		n, _, err := contentConn.ReadFromUDP(buf)
+		if err != nil {
+			log.Printf("Error reading from Content Server: %v", err)
+			return
+		}
+
+		log.Printf("POP received packet from Content Server - Size=%d bytes", n)
+
+		clientsMu.Lock()
+		for _, clientAddr := range clients {
+			_, err := conn.WriteTo(buf[:n], clientAddr)
+			if err != nil {
+				log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
+			} else {
+				log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
+			}
+		}
+		clientsMu.Unlock()
 	}
 }
 
@@ -180,7 +234,7 @@ func main() {
 	// Define flags for node name, UDP port, and node type
 	nodeName := flag.String("name", "", "Node name")
 	port := flag.Int("port", 30000, "UDP port to listen on")
-	nodeType := flag.String("type", "Node", "Node type (POP, Node, Content Server)")
+	nodeType := flag.String("type", "Node", "Node type (POP, Node, CS)")
 
 	flag.Parse()
 
@@ -198,23 +252,49 @@ func main() {
 	// Initialize node and retrieve neighbors
 	node.initialize("localhost:8080") // Replace "localhost" with the bootstrap server IP if needed
 
-	// Start ffmpeg to stream video frames
-	reader, cleanup, err := startFFmpeg()
-	if err != nil {
-		log.Fatalf("Error initializing ffmpeg: %v", err)
+	switch node.Type {
+	case "POP":
+		// POP node: Connect to Content Server and forward stream to clients
+		contentConn, err := setupUDPConnection("localhost", 4000)
+		if err != nil {
+			log.Fatalf("Error setting up UDP connection: %v", err)
+		}
+		log.Printf("POP connected to Content Server at %s", contentConn.RemoteAddr())
+		defer contentConn.Close()
+
+		conn, err := setupUDPListener(node.Port)
+		if err != nil {
+			log.Fatalf("Error setting up UDP listener: %v", err)
+		}
+		defer conn.Close()
+
+		go handleClientConnections(conn)
+		forwardToClients(conn, contentConn)
+
+	case "Node":
+		// Regular node: Just print neighbors
+		fmt.Printf("Node %s initialized as a regular node with neighbors: %v\n", node.Name, node.Neighbors)
+
+	case "CS":
+		// Content Server: Stream video frames to any connecting POP nodes
+		reader, cleanup, err := startFFmpeg()
+		if err != nil {
+			log.Fatalf("Error initializing ffmpeg: %v", err)
+		}
+		defer cleanup()
+
+		conn, err := setupUDPListener(node.Port)
+		if err != nil {
+			log.Fatalf("Error setting up UDP listener: %v", err)
+		}
+		defer conn.Close()
+
+		// Log each new client connection
+		go handleClientConnections(conn)
+
+		sendRTPPackets(conn, reader)
+
+	default:
+		log.Fatalf("Unknown node type: %s", node.Type)
 	}
-	defer cleanup()
-
-	// Set up the UDP listener
-	conn, err := setupUDPListener(node.Port)
-	if err != nil {
-		log.Fatalf("Error setting up UDP listener: %v", err)
-	}
-	defer conn.Close()
-
-	// Handle client connections in a separate goroutine
-	go handleClientConnections(conn)
-
-	// Start sending RTP packets to connected clients
-	sendRTPPackets(conn, reader)
 }
