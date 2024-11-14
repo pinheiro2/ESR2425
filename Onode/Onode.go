@@ -60,8 +60,48 @@ func (node *Node) initialize(bootstrapAddress string) {
 	fmt.Printf("Node %s (Type: %s) - Stored neighbors: %v\n", node.Name, node.Type, node.Neighbors)
 }
 
+func prepareFFmpegCommands(videos map[string]string) (map[string]*exec.Cmd, error) {
+	ffmpegMap := make(map[string]*exec.Cmd)
+
+	for name, videoPath := range videos {
+		ffmpegCmd := exec.Command("ffmpeg",
+			"-i", videoPath, // Input file
+			"-f", "image2pipe", // Output format for piping images
+			"-vcodec", "mjpeg", // Encode as JPEG
+			"-q:v", "2", // Quality (lower is better)
+			"pipe:1") // Output to stdout
+
+		ffmpegMap[name] = ffmpegCmd
+	}
+
+	return ffmpegMap, nil
+}
+
+func startFFmpeg(ffmpegMap map[string]*exec.Cmd, stream string) (*bufio.Reader, func(), error) {
+	ffmpegCmd, exists := ffmpegMap[stream]
+	if !exists {
+		return nil, nil, fmt.Errorf("stream %s not found in ffmpeg map", stream)
+	}
+
+	ffmpegOut, err := ffmpegCmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get ffmpeg stdout for stream %s: %w", stream, err)
+	}
+
+	if err := ffmpegCmd.Start(); err != nil {
+		return nil, nil, fmt.Errorf("failed to start ffmpeg for stream %s: %w", stream, err)
+	}
+
+	cleanup := func() {
+		ffmpegOut.Close()
+		ffmpegCmd.Wait()
+	}
+
+	return bufio.NewReader(ffmpegOut), cleanup, nil
+}
+
 // Starts ffmpeg to output video frames as JPEGs for Content Server
-func startFFmpeg(video string) (*bufio.Reader, func(), error) {
+func startFFmpeg_old(video string) (*bufio.Reader, func(), error) {
 	ffmpegCmd := exec.Command("ffmpeg",
 		"-i", video, // Input file
 		"-f", "image2pipe", // Output format for piping images
@@ -382,7 +422,14 @@ func main() {
 
 	case "CS":
 		// Content Server: Stream video frames to any connecting POP nodes
-		reader, cleanup, err := startFFmpeg("video_min_360.mp4")
+
+		streams := make(map[string]string)
+		streams["stream1"] = "video_min_360.mp4"
+		ffmpegCommands, err := prepareFFmpegCommands(streams)
+		if err != nil {
+			log.Fatalf("Error creating ffmpeg commands for streams: %v", err)
+		}
+		reader, cleanup, err := startFFmpeg(ffmpegCommands, "stream1")
 		if err != nil {
 			log.Fatalf("Error initializing ffmpeg: %v", err)
 		}
