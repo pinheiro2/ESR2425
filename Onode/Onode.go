@@ -93,6 +93,8 @@ func startFFmpeg(ffmpegMap map[string]*exec.Cmd, stream string) (*bufio.Reader, 
 		return nil, nil, fmt.Errorf("failed to start ffmpeg for stream %s: %w", stream, err)
 	}
 
+	log.Printf("Started streaming %s", stream)
+
 	cleanup := func() {
 		ffmpegOut.Close()
 		ffmpegCmd.Wait()
@@ -118,7 +120,6 @@ func startFFmpeg_old(video string) (*bufio.Reader, func(), error) {
 	if err := ffmpegCmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
-
 	cleanup := func() {
 		ffmpegOut.Close()
 		ffmpegCmd.Wait()
@@ -141,7 +142,7 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-func handleClientConnections(conn *net.UDPConn, connections map[string]*net.UDPConn, node Node) {
+func handleClientConnectionsPOP(conn *net.UDPConn, connections map[string]*net.UDPConn) {
 	buf := make([]byte, 1024)
 	for {
 		n, clientAddr, err := conn.ReadFrom(buf)
@@ -192,13 +193,90 @@ func handleClientConnections(conn *net.UDPConn, connections map[string]*net.UDPC
 			contentName := parts[1]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 			// Handle content request here (e.g., start sending content or fetch the requested item)
-			switch node.Type {
-			case "POP":
-				go forwardToClient(conn, connections["S1"], clientAddr)
-			case "CS":
-				//go sendRTPPackets(conn, reader)
-			}
+			sendContentRequest(connections["S1"], contentName)
+			go forwardToClient(conn, connections["S1"], clientAddr)
 
+		default:
+			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
+			// Optionally handle unknown messages, send error responses, etc.
+		}
+	}
+}
+
+func sendContentRequest(conn *net.UDPConn, contentName string) error {
+	// Prefix the content name with "Request:"
+	message := "REQUEST " + contentName
+
+	// Send the request message
+	_, err := conn.Write([]byte(message))
+	if err != nil {
+		return fmt.Errorf("failed to send content name: %w", err)
+	}
+	fmt.Printf("Requested content: %s\n", contentName)
+	return nil
+}
+
+func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
+	buf := make([]byte, 1024)
+	for {
+		n, clientAddr, err := conn.ReadFrom(buf)
+		if err != nil || n == 0 {
+			log.Printf("Error reading client connection request: %v", err)
+			continue
+		}
+
+		// Read the message from the buffer as a string
+		clientMessage := string(buf[:n])
+		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
+
+		// Split the message into parts by whitespace
+		parts := strings.Fields(clientMessage)
+		if len(parts) == 0 {
+			log.Printf("Received empty message from client %s", clientAddr)
+			continue
+		}
+
+		// Parse the command and handle each case
+		command := parts[0]
+		switch command {
+		case "CONNECT":
+			log.Printf("CONNECT request from client %s", clientAddr)
+
+			// Add the client address to the list if it's new
+			clientsMu.Lock()
+			found := false
+			for _, c := range clients {
+				if c.String() == clientAddr.String() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				clients = append(clients, clientAddr)
+				log.Printf("New client connected from %s", clientAddr)
+			} else {
+				log.Printf("Existing client %s reconnected", clientAddr)
+			}
+			clientsMu.Unlock()
+
+		case "REQUEST":
+			if len(parts) < 2 {
+				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
+				continue
+			}
+			contentName := parts[1]
+			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
+			// Handle content request here (e.g., start sending content or fetch the requested item)
+			if streams[contentName] == nil {
+				reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
+				if err != nil {
+					log.Fatalf("Error initializing ffmpeg: %v", err)
+				}
+				streams[contentName] = reader
+
+				defer cleanup()
+			}
+			sendRTPPackets(conn, streams[contentName])
 		default:
 			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
 			// Optionally handle unknown messages, send error responses, etc.
@@ -427,7 +505,7 @@ func main() {
 		defer conn.Close()
 
 		// esperar por conexao
-		go handleClientConnections(conn, connections, node)
+		go handleClientConnectionsPOP(conn, connections)
 		// forwardToClients(conn, connections["S1"])
 
 		// Block main from exiting by waiting indefinitely (useful for handling signals if needed)
@@ -439,17 +517,13 @@ func main() {
 	case "CS":
 		// Content Server: Stream video frames to any connecting POP nodes
 
-		streams := make(map[string]string)
-		streams["stream1"] = "video_min_360.mp4"
-		ffmpegCommands, err := prepareFFmpegCommands(streams)
+		videos := make(map[string]string)
+		streams := make(map[string]*bufio.Reader)
+		err := LoadJSONToMap("streams.json", videos)
+		ffmpegCommands, err := prepareFFmpegCommands(videos)
 		if err != nil {
 			log.Fatalf("Error creating ffmpeg commands for streams: %v", err)
 		}
-		reader, cleanup, err := startFFmpeg(ffmpegCommands, "stream1")
-		if err != nil {
-			log.Fatalf("Error initializing ffmpeg: %v", err)
-		}
-		defer cleanup()
 
 		conn, err := setupUDPListener(*ip, node.Port)
 		if err != nil {
@@ -458,9 +532,10 @@ func main() {
 		defer conn.Close()
 
 		// Log each new client connection
-		go handleClientConnections_old(conn)
+		go handleClientConnectionsCS(conn, streams, ffmpegCommands)
 
-		sendRTPPackets(conn, reader)
+		// sendRTPPackets(conn, reader)
+		select {}
 
 	default:
 		log.Fatalf("Unknown node type: %s", node.Type)
