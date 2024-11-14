@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -60,9 +61,9 @@ func (node *Node) initialize(bootstrapAddress string) {
 }
 
 // Starts ffmpeg to output video frames as JPEGs for Content Server
-func startFFmpeg() (*bufio.Reader, func(), error) {
+func startFFmpeg(video string) (*bufio.Reader, func(), error) {
 	ffmpegCmd := exec.Command("ffmpeg",
-		"-i", "video_min_360.mp4", // Input file
+		"-i", video, // Input file
 		"-f", "image2pipe", // Output format for piping images
 		"-vcodec", "mjpeg", // Encode as JPEG
 		"-q:v", "2", // Quality (lower is better)
@@ -99,8 +100,7 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-// Handles client connections by listening for connection requests
-func handleClientConnections(conn *net.UDPConn) {
+func handleClientConnections(conn *net.UDPConn, connections map[string]*net.UDPConn, node Node) {
 	buf := make([]byte, 1024)
 	for {
 		n, clientAddr, err := conn.ReadFrom(buf)
@@ -108,6 +108,76 @@ func handleClientConnections(conn *net.UDPConn) {
 			log.Printf("Error reading client connection request: %v", err)
 			continue
 		}
+
+		// Read the message from the buffer as a string
+		clientMessage := string(buf[:n])
+		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
+
+		// Split the message into parts by whitespace
+		parts := strings.Fields(clientMessage)
+		if len(parts) == 0 {
+			log.Printf("Received empty message from client %s", clientAddr)
+			continue
+		}
+
+		// Parse the command and handle each case
+		command := parts[0]
+		switch command {
+		case "CONNECT":
+			log.Printf("CONNECT request from client %s", clientAddr)
+
+			// Add the client address to the list if it's new
+			clientsMu.Lock()
+			found := false
+			for _, c := range clients {
+				if c.String() == clientAddr.String() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				clients = append(clients, clientAddr)
+				log.Printf("New client connected from %s", clientAddr)
+			} else {
+				log.Printf("Existing client %s reconnected", clientAddr)
+			}
+			clientsMu.Unlock()
+
+		case "REQUEST":
+			if len(parts) < 2 {
+				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
+				continue
+			}
+			contentName := parts[1]
+			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
+			// Handle content request here (e.g., start sending content or fetch the requested item)
+			switch node.Type {
+			case "POP":
+				go forwardToClient(conn, connections["S1"], clientAddr)
+			case "CS":
+				//go sendRTPPackets(conn, reader)
+			}
+
+		default:
+			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
+			// Optionally handle unknown messages, send error responses, etc.
+		}
+	}
+}
+
+// Handles client connections by listening for connection requests
+func handleClientConnections_old(conn *net.UDPConn) {
+	buf := make([]byte, 1024)
+	for {
+		n, clientAddr, err := conn.ReadFrom(buf)
+		if err != nil || n == 0 {
+			log.Printf("Error reading client connection request: %v", err)
+			continue
+		}
+
+		// Read the message from the buffer as a string
+		clientMessage := string(buf[:n])
+		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
 
 		// Log every client connection attempt
 		log.Printf("Connection attempt from client at %s", clientAddr)
@@ -205,6 +275,27 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
+// Forwards data from content server to a specific client (used by POP)
+func forwardToClient(conn *net.UDPConn, contentConn *net.UDPConn, targetClient net.Addr) {
+	buf := make([]byte, 150000)
+	for {
+		n, _, err := contentConn.ReadFromUDP(buf)
+		if err != nil {
+			log.Printf("Error reading from Content Server: %v", err)
+			return
+		}
+
+		// Forward packet only to the specified target client
+		_, err = conn.WriteTo(buf[:n], targetClient)
+		if err != nil {
+			log.Printf("Failed to forward packet to %v: %v", targetClient, err)
+		} else {
+			// Optional: log the forwarding event
+			//log.Printf("POP forwarded packet to %v - Size=%d bytes", targetClient, n)
+		}
+	}
+}
+
 // Forwards data from content server to connected clients (used by POP)
 func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
 	buf := make([]byte, 150000)
@@ -215,7 +306,7 @@ func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
 			return
 		}
 
-		log.Printf("POP received packet from Content Server - Size=%d bytes", n)
+		//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
 
 		clientsMu.Lock()
 		for _, clientAddr := range clients {
@@ -223,7 +314,7 @@ func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
 			if err != nil {
 				log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
 			} else {
-				log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
+				//log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
 			}
 		}
 		clientsMu.Unlock()
@@ -280,16 +371,18 @@ func main() {
 		defer conn.Close()
 
 		// esperar por conexao
-		go handleClientConnections(conn)
-		forwardToClients(conn, connections["S1"])
+		go handleClientConnections(conn, connections, node)
+		// forwardToClients(conn, connections["S1"])
 
+		// Block main from exiting by waiting indefinitely (useful for handling signals if needed)
+		select {}
 	case "Node":
 
 		fmt.Printf("Node %s initialized as a regular node with neighbors: %v\n", node.Name, node.Neighbors)
 
 	case "CS":
 		// Content Server: Stream video frames to any connecting POP nodes
-		reader, cleanup, err := startFFmpeg()
+		reader, cleanup, err := startFFmpeg("video_min_360.mp4")
 		if err != nil {
 			log.Fatalf("Error initializing ffmpeg: %v", err)
 		}
@@ -302,7 +395,7 @@ func main() {
 		defer conn.Close()
 
 		// Log each new client connection
-		go handleClientConnections(conn)
+		go handleClientConnections_old(conn)
 
 		sendRTPPackets(conn, reader)
 
