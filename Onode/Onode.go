@@ -252,6 +252,9 @@ func main() {
 	// Initialize node and retrieve neighbors
 	node.initialize("localhost:8080") // Replace "localhost" with the bootstrap server IP if needed
 
+	// Print all neighbors
+	log.Printf("Node %s initialized with neighbors: %v", node.Name, node.Neighbors)
+
 	switch node.Type {
 	case "POP":
 
