@@ -1,11 +1,8 @@
 package main
 
 import (
-<<<<<<< HEAD
 	"encoding/json"
-=======
 	"flag"
->>>>>>> main
 	"fmt"
 	"io"
 	"log"
