@@ -1,7 +1,11 @@
 package main
 
 import (
+<<<<<<< HEAD
 	"encoding/json"
+=======
+	"flag"
+>>>>>>> main
 	"fmt"
 	"io"
 	"log"
@@ -271,6 +275,18 @@ func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser) {
 		time.Sleep(time.Millisecond * 33)
 	}
 }
+func sendContentRequest(conn *net.UDPConn, contentName string) error {
+	// Prefix the content name with "Request:"
+	message := "REQUEST " + contentName
+
+	// Send the request message
+	_, err := conn.Write([]byte(message))
+	if err != nil {
+		return fmt.Errorf("failed to send content name: %w", err)
+	}
+	fmt.Printf("Requested content: %s\n", contentName)
+	return nil
+}
 
 func main() {
 	nodes, err := loadNodesFromFile("test.json")
@@ -287,10 +303,26 @@ func main() {
 	fmt.Printf("Eu sou o melhor node: %s", bestNode.Address)
 
 	conn, err := setupUDPConnection("localhost", 5004)
+	// Define the port flag and parse the command-line arguments
+	popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
+	port := flag.Int("port", 8000, "UDP port to connect to on the server")
+	flag.Parse()
+
+	// Set up the UDP connection to the specified port
+	conn, err := setupUDPConnection(*popIp, *port)
 	if err != nil {
 		log.Fatalf("Error setting up UDP connection: %v", err)
 	}
 	defer conn.Close()
+
+	// wait 2 seconds to request for testing purpose
+	time.Sleep(2 * time.Second)
+
+	// Send the content name request
+	err = sendContentRequest(conn, "video_min_360.mp4")
+	if err != nil {
+		log.Fatalf("Error sending content request: %v", err)
+	}
 
 	ffplayCmd, ffplayIn, err := startFFPlay()
 	if err != nil {

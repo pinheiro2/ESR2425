@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -9,8 +10,8 @@ import (
 )
 
 // Função para ler o arquivo de configuração JSON
-func readConfig() (map[string][]string, map[string]string) {
-	byteValue, err := os.ReadFile("config.json")
+func readConfig(configFilePath string) (map[string][]string, map[string]string) {
+	byteValue, err := os.ReadFile(configFilePath)
 	if err != nil {
 		log.Fatalf("Erro ao ler o arquivo de configuração: %v\n", err)
 	}
@@ -85,8 +86,12 @@ func handleConnection(conn net.Conn, networkData map[string][]string, addressMap
 }
 
 func main() {
+	// Definir um argumento de linha de comando para o caminho do arquivo de configuração
+	configFilePath := flag.String("config", "config.json", "Path to the configuration file")
+	flag.Parse()
+
 	// Carregar o mapa de configuração da rede e os endereços IP dos nós
-	networkData, addressMap := readConfig()
+	networkData, addressMap := readConfig(*configFilePath)
 
 	// Iniciar o servidor TCP na porta 8080
 	listener, err := net.Listen("tcp", ":8080")
