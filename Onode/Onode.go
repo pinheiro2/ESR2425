@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -319,6 +320,21 @@ func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
 		}
 		clientsMu.Unlock()
 	}
+}
+
+func LoadJSONToMap(filename string, data map[string]string) error {
+	// Lê o conteúdo do ficheiro diretamente para byte slice
+	byteValue, err := os.ReadFile(filename)
+	if err != nil {
+		return fmt.Errorf("erro ao abrir o ficheiro: %w", err)
+	}
+
+	// Decodifica o JSON para o map fornecido
+	if err := json.Unmarshal(byteValue, &data); err != nil {
+		return fmt.Errorf("erro ao decodificar o JSON: %w", err)
+	}
+
+	return nil
 }
 
 func main() {
