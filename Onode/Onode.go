@@ -279,46 +279,45 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 			sendRTPPackets(conn, streams[contentName])
 		default:
 			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
-			// Optionally handle unknown messages, send error responses, etc.
 		}
 	}
 }
 
 // Handles client connections by listening for connection requests
-func handleClientConnections_old(conn *net.UDPConn) {
-	buf := make([]byte, 1024)
-	for {
-		n, clientAddr, err := conn.ReadFrom(buf)
-		if err != nil || n == 0 {
-			log.Printf("Error reading client connection request: %v", err)
-			continue
-		}
+// func handleClientConnections_old(conn *net.UDPConn) {
+// 	buf := make([]byte, 1024)
+// 	for {
+// 		n, clientAddr, err := conn.ReadFrom(buf)
+// 		if err != nil || n == 0 {
+// 			log.Printf("Error reading client connection request: %v", err)
+// 			continue
+// 		}
 
-		// Read the message from the buffer as a string
-		clientMessage := string(buf[:n])
-		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
+// 		// Read the message from the buffer as a string
+// 		clientMessage := string(buf[:n])
+// 		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
 
-		// Log every client connection attempt
-		log.Printf("Connection attempt from client at %s", clientAddr)
+// 		// Log every client connection attempt
+// 		log.Printf("Connection attempt from client at %s", clientAddr)
 
-		// Add the client address to the list if it's new
-		clientsMu.Lock()
-		found := false
-		for _, c := range clients {
-			if c.String() == clientAddr.String() {
-				found = true
-				break
-			}
-		}
-		if !found {
-			clients = append(clients, clientAddr)
-			log.Printf("New client connected from %s", clientAddr)
-		} else {
-			log.Printf("Existing client %s reconnected", clientAddr)
-		}
-		clientsMu.Unlock()
-	}
-}
+// 		// Add the client address to the list if it's new
+// 		clientsMu.Lock()
+// 		found := false
+// 		for _, c := range clients {
+// 			if c.String() == clientAddr.String() {
+// 				found = true
+// 				break
+// 			}
+// 		}
+// 		if !found {
+// 			clients = append(clients, clientAddr)
+// 			log.Printf("New client connected from %s", clientAddr)
+// 		} else {
+// 			log.Printf("Existing client %s reconnected", clientAddr)
+// 		}
+// 		clientsMu.Unlock()
+// 	}
+// }
 
 // Sends RTP packets to connected clients with logging
 func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader) {
@@ -485,17 +484,36 @@ func main() {
 	case "POP":
 
 		connections := make(map[string]*net.UDPConn)
+
 		for neighborName, neighborIP := range node.Neighbors {
-			dataConn, err := setupUDPConnection(neighborIP, 8000)
+			infoConn, err := setupUDPConnection(neighborIP, 8000)
 			if err != nil {
 				log.Fatalf("Error setting up UDP connection to %s (%s): %v", neighborName, neighborIP, err)
 			}
-			log.Printf("POP connected to %s at %s", neighborName, dataConn.RemoteAddr())
-			connections[neighborName] = dataConn
-			defer dataConn.Close() // Remember to close these later
+			log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
+			connections[neighborName] = infoConn
+			defer infoConn.Close() // Remember to close these later
 		}
 
-		// Now you can access connections[neighborName] to interact with each neighbor's connection
+		streamConnectionsIn := make(map[string]*net.UDPConn)
+		streamConnectionsOut := make(map[string]*net.UDPConn)
+
+		for stream := range node.Neighbors {
+			streamConnIn, err := setupUDPConnection(neighborIP, 8000)
+			streamConnOut, err := setupUDPConnection(neighborIP, 8000)
+			if err != nil {
+				log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
+			}
+			// log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
+			streamConnectionsIn[stream] = streamConnIn
+			streamConnectionsOut[stream] = streamConnOut
+
+			cleanup := func() {
+				streamConnIn.Close()  // Remember to close these later
+				streamConnOut.Close() // Remember to close these later
+			}
+			defer cleanup()
+		}
 
 		// abrir porta udp para escuta de pedidos
 		conn, err := setupUDPListener(*ip, node.Port)
@@ -506,9 +524,7 @@ func main() {
 
 		// esperar por conexao
 		go handleClientConnectionsPOP(conn, connections)
-		// forwardToClients(conn, connections["S1"])
 
-		// Block main from exiting by waiting indefinitely (useful for handling signals if needed)
 		select {}
 	case "Node":
 
@@ -531,10 +547,8 @@ func main() {
 		}
 		defer conn.Close()
 
-		// Log each new client connection
 		go handleClientConnectionsCS(conn, streams, ffmpegCommands)
 
-		// sendRTPPackets(conn, reader)
 		select {}
 
 	default:
