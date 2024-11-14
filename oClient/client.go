@@ -76,11 +76,12 @@ func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser) {
 
 func main() {
 	// Define the port flag and parse the command-line arguments
-	port := flag.Int("port", 5004, "UDP port to connect to on the server")
+	popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
+	port := flag.Int("port", 8000, "UDP port to connect to on the server")
 	flag.Parse()
 
 	// Set up the UDP connection to the specified port
-	conn, err := setupUDPConnection("localhost", *port)
+	conn, err := setupUDPConnection(*popIp, *port)
 	if err != nil {
 		log.Fatalf("Error setting up UDP connection: %v", err)
 	}
