@@ -103,7 +103,7 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	// Send the content name request
-	err = sendContentRequest(conn, "video_min_360.mp4")
+	err = sendContentRequest(conn, "stream1")
 	if err != nil {
 		log.Fatalf("Error sending content request: %v", err)
 	}
