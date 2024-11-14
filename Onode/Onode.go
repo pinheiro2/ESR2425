@@ -86,10 +86,10 @@ func startFFmpeg() (*bufio.Reader, func(), error) {
 }
 
 // Sets up the UDP listener on the specified port
-func setupUDPListener(port int) (*net.UDPConn, error) {
+func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	addr := net.UDPAddr{
 		Port: port,
-		IP:   net.ParseIP("localhost"),
+		IP:   net.ParseIP(ip),
 	}
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
@@ -233,7 +233,8 @@ func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
 func main() {
 	// Define flags for node name, UDP port, and node type
 	nodeName := flag.String("name", "", "Node name")
-	port := flag.Int("port", 30000, "UDP port to listen on")
+	ip := flag.String("ip", "0.0.0.0", "IP to open on for testing")
+	port := flag.Int("port", 8000, "UDP port to listen on")
 	nodeType := flag.String("type", "Node", "Node type (POP, Node, CS)")
 
 	flag.Parse()
@@ -258,16 +259,21 @@ func main() {
 	switch node.Type {
 	case "POP":
 
-		// abrir conexao da arvore de distribuicao
-		contentConn, err := setupUDPConnection("localhost", 4000)
-		if err != nil {
-			log.Fatalf("Error setting up UDP connection: %v", err)
+		connections := make(map[string]*net.UDPConn)
+		for neighborName, neighborIP := range node.Neighbors {
+			dataConn, err := setupUDPConnection(neighborIP, 8000)
+			if err != nil {
+				log.Fatalf("Error setting up UDP connection to %s (%s): %v", neighborName, neighborIP, err)
+			}
+			log.Printf("POP connected to %s at %s", neighborName, dataConn.RemoteAddr())
+			connections[neighborName] = dataConn
+			defer dataConn.Close() // Remember to close these later
 		}
-		log.Printf("POP connected to Content Server at %s", contentConn.RemoteAddr())
-		defer contentConn.Close()
+
+		// Now you can access connections[neighborName] to interact with each neighbor's connection
 
 		// abrir porta udp para escuta de pedidos
-		conn, err := setupUDPListener(node.Port)
+		conn, err := setupUDPListener(*ip, node.Port)
 		if err != nil {
 			log.Fatalf("Error setting up UDP listener: %v", err)
 		}
@@ -275,7 +281,7 @@ func main() {
 
 		// esperar por conexao
 		go handleClientConnections(conn)
-		forwardToClients(conn, contentConn)
+		forwardToClients(conn, connections["S1"])
 
 	case "Node":
 
@@ -289,7 +295,7 @@ func main() {
 		}
 		defer cleanup()
 
-		conn, err := setupUDPListener(node.Port)
+		conn, err := setupUDPListener(*ip, node.Port)
 		if err != nil {
 			log.Fatalf("Error setting up UDP listener: %v", err)
 		}
