@@ -301,6 +301,8 @@ func main() {
 
 	conn, err := setupUDPConnection("localhost", 5004)
 	// Define the port flag and parse the command-line arguments
+	stream := flag.String("stream", "stream1", "stream to connect to")
+
 	popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
 	port := flag.Int("port", 8000, "UDP port to connect to on the server")
 	flag.Parse()
@@ -316,7 +318,7 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	// Send the content name request
-	err = sendContentRequest(conn, "video_min_360.mp4")
+	err = sendContentRequest(conn, *stream)
 	if err != nil {
 		log.Fatalf("Error sending content request: %v", err)
 	}
