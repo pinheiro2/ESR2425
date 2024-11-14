@@ -495,25 +495,25 @@ func main() {
 			defer infoConn.Close() // Remember to close these later
 		}
 
-		streamConnectionsIn := make(map[string]*net.UDPConn)
-		streamConnectionsOut := make(map[string]*net.UDPConn)
+		// streamConnectionsIn := make(map[string]*net.UDPConn)
+		// streamConnectionsOut := make(map[string]*net.UDPConn)
 
-		for stream := range node.Neighbors {
-			streamConnIn, err := setupUDPConnection(neighborIP, 8000)
-			streamConnOut, err := setupUDPConnection(neighborIP, 8000)
-			if err != nil {
-				log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
-			}
-			// log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
-			streamConnectionsIn[stream] = streamConnIn
-			streamConnectionsOut[stream] = streamConnOut
+		// for stream := range node.Neighbors {
+		// 	streamConnIn, err := setupUDPConnection(neighborIP, 8000)
+		// 	streamConnOut, err := setupUDPConnection(neighborIP, 8000)
+		// 	if err != nil {
+		// 		log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
+		// 	}
+		// 	// log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
+		// 	streamConnectionsIn[stream] = streamConnIn
+		// 	streamConnectionsOut[stream] = streamConnOut
 
-			cleanup := func() {
-				streamConnIn.Close()  // Remember to close these later
-				streamConnOut.Close() // Remember to close these later
-			}
-			defer cleanup()
-		}
+		// 	cleanup := func() {
+		// 		streamConnIn.Close()  // Remember to close these later
+		// 		streamConnOut.Close() // Remember to close these later
+		// 	}
+		// 	defer cleanup()
+		// }
 
 		// abrir porta udp para escuta de pedidos
 		conn, err := setupUDPListener(*ip, node.Port)
