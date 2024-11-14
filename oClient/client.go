@@ -299,7 +299,6 @@ func main() {
 	bestNode := findBestNode(nodes)
 	fmt.Printf("Eu sou o melhor node: %s", bestNode.Address)
 
-	conn, err := setupUDPConnection("localhost", 5004)
 	// Define the port flag and parse the command-line arguments
 	stream := flag.String("stream", "stream1", "stream to connect to")
 
