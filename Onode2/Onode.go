@@ -254,7 +254,8 @@ func main() {
 
 	switch node.Type {
 	case "POP":
-		// POP node: Connect to Content Server and forward stream to clients
+
+		// abrir conexao da arvore de distribuicao
 		contentConn, err := setupUDPConnection("localhost", 4000)
 		if err != nil {
 			log.Fatalf("Error setting up UDP connection: %v", err)
@@ -262,17 +263,19 @@ func main() {
 		log.Printf("POP connected to Content Server at %s", contentConn.RemoteAddr())
 		defer contentConn.Close()
 
+		// abrir porta udp para escuta de pedidos
 		conn, err := setupUDPListener(node.Port)
 		if err != nil {
 			log.Fatalf("Error setting up UDP listener: %v", err)
 		}
 		defer conn.Close()
 
+		// esperar por conexao
 		go handleClientConnections(conn)
 		forwardToClients(conn, contentConn)
 
 	case "Node":
-		// Regular node: Just print neighbors
+
 		fmt.Printf("Node %s initialized as a regular node with neighbors: %v\n", node.Name, node.Neighbors)
 
 	case "CS":
