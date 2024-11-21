@@ -27,8 +27,11 @@ type Node struct {
 }
 
 var (
-	clients   []net.Addr
-	clientsMu sync.Mutex // Mutex to protect the client list
+	clients             []net.Addr
+	clientsMu           sync.Mutex // Mutex to protect the client list
+	streamConnectionsIn map[string]*net.UDPConn
+	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
+
 )
 
 // Initializes the node and retrieves the neighbor list from the bootstrap server
@@ -143,7 +146,12 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamConnectionsIn map[string]*net.UDPConn) {
+func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string]string) {
+	// Initialize the map if it's nil
+	if streamConnectionsIn == nil {
+		streamConnectionsIn = make(map[string]*net.UDPConn)
+	}
+
 	buf := make([]byte, 1024)
 	for {
 		n, clientAddr, err := protocolConn.ReadFrom(buf)
@@ -194,8 +202,25 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamConnectionsIn m
 			contentName := parts[1]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
+			/*********************/
+
+			streamConnIn, err := setupUDPConnection(streamFrom[contentName], 8000)
+
+			if err != nil {
+				log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
+			}
+
+			// Protect access to streamConnectionsIn
+			streamConnMu.Lock()
+			streamConnectionsIn[contentName] = streamConnIn
+			streamConnMu.Unlock()
+
+			defer streamConnIn.Close()
+
+			/*********************/
+
 			// Send the content request to the appropriate stream connection
-			err := sendContentRequest(streamConnectionsIn[contentName], contentName)
+			err = sendContentRequest(streamConnectionsIn[contentName], contentName)
 			if err != nil {
 				log.Printf("Failed to request content \"%s\" for client %s: %v", contentName, clientAddr, err)
 				continue // Skip forwarding if content request fails
@@ -378,11 +403,11 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	}
 
 	// Send initial connection request
-	_, err = conn.Write([]byte("CONNECT"))
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to send connection request: %w", err)
-	}
+	// _, err = conn.Write([]byte("CONNECT"))
+	// if err != nil {
+	// 	conn.Close()
+	// 	return nil, fmt.Errorf("failed to send connection request: %w", err)
+	// }
 	fmt.Println("Sent connection request to server")
 	return conn, nil
 }
@@ -477,45 +502,44 @@ func main() {
 	switch node.Type {
 	case "POP":
 
-		connections := make(map[string]*net.UDPConn)
+		// connections := make(map[string]*net.UDPConn)
 
-		for neighborName, neighborIP := range node.Neighbors {
-			infoConn, err := setupUDPConnection(neighborIP, 8000)
-			if err != nil {
-				log.Fatalf("Error setting up UDP connection to %s (%s): %v", neighborName, neighborIP, err)
-			}
-			log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
-			connections[neighborName] = infoConn
-			defer infoConn.Close() // Remember to close these later
-		}
+		// for neighborName, neighborIP := range node.Neighbors {
+		// 	infoConn, err := setupUDPConnection(neighborIP, 8000)
+		// 	if err != nil {
+		// 		log.Fatalf("Error setting up UDP connection to %s (%s): %v", neighborName, neighborIP, err)
+		// 	}
+		// 	log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
+		// 	connections[neighborName] = infoConn
+		// 	defer infoConn.Close() // Remember to close these later
+		// }
 
 		streamFrom := make(map[string]string)
 
 		// Add entries to the map
 		// TODO: arvore de distribuição aqui
-		streamFrom["stream1"] = "S1"
-		streamFrom["stream2"] = "S1"
-		streamFrom["stream3"] = "S1"
+		streamFrom["stream1"] = node.Neighbors["S1"]
+		streamFrom["stream2"] = node.Neighbors["S1"]
+		streamFrom["stream3"] = node.Neighbors["S1"]
 
-		streamConnectionsIn := make(map[string]*net.UDPConn)
-		// streamConnectionsOut := make(map[string]*net.UDPConn)
+		// // streamConnectionsOut := make(map[string]*net.UDPConn)
 
-		for stream, neighbor := range streamFrom {
-			streamConnIn, err := setupUDPConnection(node.Neighbors[neighbor], 8000)
-			// streamConnOut, err := setupUDPConnection(neighbor, 8000)
-			if err != nil {
-				log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
-			}
-			// log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
-			streamConnectionsIn[stream] = streamConnIn
-			// streamConnectionsOut[stream] = streamConnOut
+		// for stream, neighborIP := range streamFrom {
+		// 	streamConnIn, err := setupUDPConnection(neighborIP, 8000)
+		// 	// streamConnOut, err := setupUDPConnection(neighbor, 8000)
+		// 	if err != nil {
+		// 		log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
+		// 	}
+		// 	// log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
+		// 	streamConnectionsIn[stream] = streamConnIn
+		// 	// streamConnectionsOut[stream] = streamConnOut
 
-			cleanup := func() {
-				streamConnIn.Close() // Remember to close these later
-				// streamConnOut.Close() // Remember to close these later
-			}
-			defer cleanup()
-		}
+		// 	cleanup := func() {
+		// 		streamConnIn.Close() // Remember to close these later
+		// 		// streamConnOut.Close() // Remember to close these later
+		// 	}
+		// 	defer cleanup()
+		// }
 
 		// abrir porta udp para escuta de pedidos
 		protocolConn, err := setupUDPListener(*ip, node.Port)
@@ -525,7 +549,7 @@ func main() {
 		defer protocolConn.Close()
 
 		// esperar por conexao
-		go handleClientConnectionsPOP(protocolConn, streamConnectionsIn)
+		go handleClientConnectionsPOP(protocolConn, streamFrom)
 
 		select {}
 	case "Node":
