@@ -221,12 +221,12 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	// Send initial connection request
-	_, err = conn.Write([]byte("CONNECT"))
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to send connection request: %w", err)
-	}
+	// // Send initial connection request
+	// _, err = conn.Write([]byte("CONNECT"))
+	// if err != nil {
+	// 	conn.Close()
+	// 	return nil, fmt.Errorf("failed to send connection request: %w", err)
+	// }
 	fmt.Println("Sent connection request to server")
 	return conn, nil
 }
