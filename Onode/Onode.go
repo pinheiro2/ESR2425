@@ -203,7 +203,7 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
 			/*********************/
-
+			// TODO: if connection is established dont create a new connection
 			streamConnIn, err := setupUDPConnection(streamFrom[contentName], 8000)
 
 			if err != nil {
@@ -521,25 +521,6 @@ func main() {
 		streamFrom["stream1"] = node.Neighbors["S1"]
 		streamFrom["stream2"] = node.Neighbors["S1"]
 		streamFrom["stream3"] = node.Neighbors["S1"]
-
-		// // streamConnectionsOut := make(map[string]*net.UDPConn)
-
-		// for stream, neighborIP := range streamFrom {
-		// 	streamConnIn, err := setupUDPConnection(neighborIP, 8000)
-		// 	// streamConnOut, err := setupUDPConnection(neighbor, 8000)
-		// 	if err != nil {
-		// 		log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
-		// 	}
-		// 	// log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
-		// 	streamConnectionsIn[stream] = streamConnIn
-		// 	// streamConnectionsOut[stream] = streamConnOut
-
-		// 	cleanup := func() {
-		// 		streamConnIn.Close() // Remember to close these later
-		// 		// streamConnOut.Close() // Remember to close these later
-		// 	}
-		// 	defer cleanup()
-		// }
 
 		// abrir porta udp para escuta de pedidos
 		protocolConn, err := setupUDPListener(*ip, node.Port)
