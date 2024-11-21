@@ -65,22 +65,18 @@ func (node *Node) initialize(bootstrapAddress string) {
 	fmt.Printf("Node %s (Type: %s) - Stored neighbors: %v\n", node.Name, node.Type, node.Neighbors)
 }
 
-// newFFmpegCommand creates and returns a new ffmpeg command for the given video path.
-func newFFmpegCommand(videoPath string) *exec.Cmd {
-	return exec.Command("ffmpeg",
-		"-stream_loop", "-1", // Loop the video infinitely
-		"-i", videoPath, // Input file
-		"-f", "image2pipe", // Output format for piping images
-		"-vcodec", "mjpeg", // Encode as JPEG
-		"-q:v", "2", // Quality (lower is better)
-		"pipe:1") // Output to stdout
-}
-
-func prepareFFmpegCommands() (map[string]*exec.Cmd, error) {
+func prepareFFmpegCommands(videos map[string]string) (map[string]*exec.Cmd, error) {
 	ffmpegMap := make(map[string]*exec.Cmd)
 
 	for name, videoPath := range videos {
-		ffmpegCmd := newFFmpegCommand(videoPath)
+		ffmpegCmd := exec.Command("ffmpeg",
+			"-stream_loop", "-1", // Loop the video infinitely
+			"-i", videoPath, // Input file
+			"-f", "image2pipe", // Output format for piping images
+			"-vcodec", "mjpeg", // Encode as JPEG
+			"-q:v", "2", // Quality (lower is better)
+			"pipe:1") // Output to stdout
+
 		ffmpegMap[name] = ffmpegCmd
 	}
 
