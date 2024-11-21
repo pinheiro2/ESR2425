@@ -353,9 +353,6 @@ func main() {
 	select {
 	case <-done:
 		log.Println("Stream ended, shutting down.")
-	case <-time.After(10 * time.Second): // Optional timeout for long streams
-		log.Println("Stream timeout reached, shutting down.")
-		close(done)
 	}
 
 }
