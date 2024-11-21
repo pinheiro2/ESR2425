@@ -496,6 +496,31 @@ func main() {
 
 		// Add entries to the map
 		// TODO: arvore de distribuição aqui
+		streamFrom["stream1"] = node.Neighbors["O1"]
+		streamFrom["stream2"] = node.Neighbors["O1"]
+		streamFrom["stream3"] = node.Neighbors["O1"]
+
+		// abrir porta udp para escuta de pedidos
+		protocolConn, err := setupUDPListener(*ip, node.Port)
+		if err != nil {
+			log.Fatalf("Error setting up UDP listener: %v", err)
+		}
+		defer protocolConn.Close()
+
+		// esperar por conexao
+		go handleClientConnectionsPOP(protocolConn, streamFrom)
+
+		select {}
+
+	case "NODE":
+
+		fmt.Printf("Node %s initialized as a regular node with neighbors: %v\n", node.Name, node.Neighbors)
+
+		// streamFrom [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
+		streamFrom := make(map[string]string)
+
+		// Add entries to the map
+		// TODO: arvore de distribuição aqui
 		streamFrom["stream1"] = node.Neighbors["S1"]
 		streamFrom["stream2"] = node.Neighbors["S1"]
 		streamFrom["stream3"] = node.Neighbors["S1"]
@@ -511,9 +536,6 @@ func main() {
 		go handleClientConnectionsPOP(protocolConn, streamFrom)
 
 		select {}
-	case "Node":
-
-		fmt.Printf("Node %s initialized as a regular node with neighbors: %v\n", node.Name, node.Neighbors)
 
 	case "CS":
 		// Content Server: Stream video frames to any connecting POP nodes
