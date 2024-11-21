@@ -411,27 +411,6 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-// Forwards data from content server to a specific client (used by POP)
-func forwardToClient(conn *net.UDPConn, contentConn *net.UDPConn, targetClient net.Addr) {
-	buf := make([]byte, 150000)
-	for {
-		n, _, err := contentConn.ReadFromUDP(buf)
-		if err != nil {
-			log.Printf("Error reading from Content Server: %v", err)
-			return
-		}
-
-		// Forward packet only to the specified target client
-		_, err = conn.WriteTo(buf[:n], targetClient)
-		if err != nil {
-			log.Printf("Failed to forward packet to %v: %v", targetClient, err)
-		} else {
-			// Optional: log the forwarding event
-			log.Printf("POP forwarded packet to %v - Size=%d bytes", targetClient, n)
-		}
-	}
-}
-
 // Forwards data from content server to connected clients (used by POP)
 func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
 	buf := make([]byte, 150000)
