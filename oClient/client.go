@@ -231,18 +231,18 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-func startFFPlay() (*exec.Cmd, io.WriteCloser, error) {
+func startFFPlay() (io.WriteCloser, error) {
 	ffplayCmd := exec.Command("ffplay", "-f", "mjpeg", "-i", "pipe:0")
 	ffplayIn, err := ffplayCmd.StdinPipe()
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create ffplay input pipe: %w", err)
+		return nil, fmt.Errorf("failed to create ffplay input pipe: %w", err)
 	}
 
 	if err := ffplayCmd.Start(); err != nil {
-		return nil, nil, fmt.Errorf("failed to start ffplay: %w", err)
+		return nil, fmt.Errorf("failed to start ffplay: %w", err)
 	}
 
-	return ffplayCmd, ffplayIn, nil
+	return ffplayIn, nil
 }
 
 func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser, done chan struct{}) {
@@ -338,7 +338,7 @@ func main() {
 		log.Fatalf("Error sending content request: %v", err)
 	}
 
-	ffplayCmd, ffplayIn, err := startFFPlay()
+	ffplayIn, err := startFFPlay()
 	if err != nil {
 		log.Fatalf("Error starting ffplay: %v", err)
 	}
@@ -358,8 +358,4 @@ func main() {
 		close(done)
 	}
 
-	// Wait for ffplay to exit gracefully
-	if err := ffplayCmd.Wait(); err != nil {
-		log.Printf("ffplay exited with error: %v", err)
-	}
 }
