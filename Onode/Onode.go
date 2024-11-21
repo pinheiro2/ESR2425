@@ -27,9 +27,11 @@ type Node struct {
 }
 
 var (
+	clients             []net.Addr
+	clientsMu           sync.Mutex // Mutex to protect the client list
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
-
+	videos              map[string]string
 )
 
 // Initializes the node and retrieves the neighbor list from the bootstrap server
@@ -74,7 +76,7 @@ func newFFmpegCommand(videoPath string) *exec.Cmd {
 		"pipe:1") // Output to stdout
 }
 
-func prepareFFmpegCommands(videos map[string]string) (map[string]*exec.Cmd, error) {
+func prepareFFmpegCommands() (map[string]*exec.Cmd, error) {
 	ffmpegMap := make(map[string]*exec.Cmd)
 
 	for name, videoPath := range videos {
@@ -162,6 +164,23 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 			contentName := parts[1]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
+			// Add the client address to the list if it's new
+			clientsMu.Lock()
+			found := false
+			for _, c := range clients {
+				if c.String() == clientAddr.String() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				clients = append(clients, clientAddr)
+				log.Printf("New client connected from %s", clientAddr)
+			} else {
+				log.Printf("Existing client %s reconnected", clientAddr)
+			}
+			clientsMu.Unlock()
+
 			// Protect access to streamConnectionsIn and check if the connection already exists
 			streamConnMu.Lock()
 			streamConnIn, exists := streamConnectionsIn[contentName]
@@ -188,12 +207,12 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 				}
 
 				log.Printf("New connection established for content \"%s\"", contentName)
+
+				// Forward the stream to the client
+				go forwardToClients(protocolConn, streamConnIn)
 			} else {
 				log.Printf("Reusing existing connection for content \"%s\"", contentName)
 			}
-
-			// Forward the stream to the client
-			go forwardToClient(protocolConn, streamConnIn, clientAddr)
 
 		default:
 			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
@@ -398,6 +417,30 @@ func forwardToClient(conn *net.UDPConn, contentConn *net.UDPConn, targetClient n
 	}
 }
 
+// Forwards data from content server to connected clients (used by POP)
+func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
+	buf := make([]byte, 150000)
+	for {
+		n, _, err := contentConn.ReadFromUDP(buf)
+		if err != nil {
+			log.Printf("Error reading from Content Server: %v", err)
+			return
+		}
+
+		//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
+
+		clientsMu.Lock()
+		for _, clientAddr := range clients {
+			_, err := conn.WriteTo(buf[:n], clientAddr)
+			if err != nil {
+				log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
+			} else {
+				//log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
+			}
+		}
+		clientsMu.Unlock()
+	}
+}
 func LoadJSONToMap(filename string, data map[string]string) error {
 	// Lê o conteúdo do ficheiro diretamente para byte slice
 	byteValue, err := os.ReadFile(filename)
@@ -485,7 +528,7 @@ func main() {
 		streams := make(map[string]*bufio.Reader)
 		LoadJSONToMap("streams.json", videos)
 
-		ffmpegCommands, err := prepareFFmpegCommands(videos)
+		ffmpegCommands, err := prepareFFmpegCommands()
 		if err != nil {
 			log.Fatalf("Error creating ffmpeg commands for streams: %v", err)
 		}
