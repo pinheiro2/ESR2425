@@ -70,6 +70,7 @@ func prepareFFmpegCommands(videos map[string]string) (map[string]*exec.Cmd, erro
 
 	for name, videoPath := range videos {
 		ffmpegCmd := exec.Command("ffmpeg",
+			"-stream_loop", "-1", // Loop the video infinitely
 			"-i", videoPath, // Input file
 			"-f", "image2pipe", // Output format for piping images
 			"-vcodec", "mjpeg", // Encode as JPEG
@@ -202,31 +203,38 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 			contentName := parts[1]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
-			/*********************/
-			// TODO: if connection is established dont create a new connection
-			streamConnIn, err := setupUDPConnection(streamFrom[contentName], 8000)
-
-			if err != nil {
-				log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
-			}
-
-			// Protect access to streamConnectionsIn
+			// Protect access to streamConnectionsIn and check if the connection already exists
 			streamConnMu.Lock()
-			streamConnectionsIn[contentName] = streamConnIn
+			streamConnIn, exists := streamConnectionsIn[contentName]
 			streamConnMu.Unlock()
 
-			defer streamConnIn.Close()
+			if !exists {
+				// Connection doesn't exist, create a new one
+				var err error
+				streamConnIn, err = setupUDPConnection(streamFrom[contentName], 8000)
+				if err != nil {
+					log.Fatalf("Error setting up UDP connection to %s for content \"%s\": %v", streamFrom[contentName], contentName, err)
+				}
 
-			/*********************/
+				// Add the new connection to the map
+				streamConnMu.Lock()
+				streamConnectionsIn[contentName] = streamConnIn
+				streamConnMu.Unlock()
 
-			// Send the content request to the appropriate stream connection
-			err = sendContentRequest(streamConnectionsIn[contentName], contentName)
-			if err != nil {
-				log.Printf("Failed to request content \"%s\" for client %s: %v", contentName, clientAddr, err)
-				continue // Skip forwarding if content request fails
+				// Send the content request to the appropriate stream connection
+				err = sendContentRequest(streamConnIn, contentName)
+				if err != nil {
+					log.Printf("Failed to request content \"%s\" for client %s: %v", contentName, clientAddr, err)
+					continue // Skip forwarding if content request fails
+				}
+
+				log.Printf("New connection established for content \"%s\"", contentName)
+			} else {
+				log.Printf("Reusing existing connection for content \"%s\"", contentName)
 			}
 
-			go forwardToClient(protocolConn, streamConnectionsIn[contentName], clientAddr)
+			// Forward the stream to the client
+			go forwardToClient(protocolConn, streamConnIn, clientAddr)
 
 		default:
 			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
@@ -295,7 +303,7 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 			}
 			clientsMu.Unlock()
 
-		case "REQUEST":
+		case "REQUEST1":
 			if len(parts) < 2 {
 				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
 				continue
@@ -314,14 +322,56 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 			}
 
 			go sendRTPPackets(conn, streams[contentName], clientAddr)
+		case "REQUEST":
+			if len(parts) < 2 {
+				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
+				continue
+			}
+
+			contentName := parts[1]
+			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
+
+			if streams[contentName] == nil {
+				reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
+				if err != nil {
+					log.Fatalf("Error initializing ffmpeg: %v", err)
+				}
+				streams[contentName] = reader
+
+				defer cleanup()
+			}
+
+			// Send RTP packets and handle errors
+			go func() {
+				err := sendRTPPackets(conn, streams[contentName], clientAddr)
+				if err != nil {
+					log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
+
+					// Restart the stream if it has ended
+					if err.Error() == "end of stream reached" {
+						log.Printf("Restarting stream for content \"%s\"", contentName)
+
+						reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
+						if err != nil {
+							log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
+						}
+
+						streams[contentName] = reader
+						defer cleanup()
+
+						// Restart sending RTP packets
+						sendRTPPackets(conn, reader, clientAddr)
+					}
+				}
+			}()
+
 		default:
 			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
 		}
 	}
 }
 
-// Sends RTP packets to a specific client with logging
-func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Addr) {
+func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Addr) error {
 	seqNumber := uint16(0)
 	ssrc := uint32(1234)
 	payloadType := uint8(96) // Dynamic payload type for video
@@ -335,10 +385,10 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Ad
 			if err != nil {
 				if err == io.EOF {
 					log.Println("End of stream reached.")
-				} else {
-					log.Printf("Error reading byte: %v", err)
+					return fmt.Errorf("end of stream reached")
 				}
-				return
+				log.Printf("Error reading byte: %v", err)
+				return fmt.Errorf("error reading byte: %w", err)
 			}
 
 			buf.WriteByte(b)
@@ -351,7 +401,7 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Ad
 			// Check buffer size to prevent overflows
 			if buf.Len() > maxBufferSize {
 				log.Printf("Frame exceeds max buffer size (%d bytes). Discarding.", maxBufferSize)
-				return
+				return fmt.Errorf("frame exceeds max buffer size (%d bytes)", maxBufferSize)
 			}
 		}
 
@@ -371,13 +421,14 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Ad
 		packetData, err := packet.Marshal()
 		if err != nil {
 			log.Printf("Failed to marshal RTP packet: %v", err)
-			continue // Skip this frame if marshaling fails
+			return fmt.Errorf("failed to marshal RTP packet: %w", err)
 		}
 
 		// Send the packet to the specific target client
 		_, err = conn.WriteTo(packetData, targetClient)
 		if err != nil {
 			log.Printf("Failed to send packet to %v: %v", targetClient, err)
+			return fmt.Errorf("failed to send packet to %v: %w", targetClient, err)
 		} else {
 			// Log packet details after successful send
 			log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
@@ -428,33 +479,8 @@ func forwardToClient(conn *net.UDPConn, contentConn *net.UDPConn, targetClient n
 			log.Printf("Failed to forward packet to %v: %v", targetClient, err)
 		} else {
 			// Optional: log the forwarding event
-			//log.Printf("POP forwarded packet to %v - Size=%d bytes", targetClient, n)
+			log.Printf("POP forwarded packet to %v - Size=%d bytes", targetClient, n)
 		}
-	}
-}
-
-// Forwards data from content server to connected clients (used by POP)
-func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
-	buf := make([]byte, 150000)
-	for {
-		n, _, err := contentConn.ReadFromUDP(buf)
-		if err != nil {
-			log.Printf("Error reading from Content Server: %v", err)
-			return
-		}
-
-		//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
-
-		clientsMu.Lock()
-		for _, clientAddr := range clients {
-			_, err := conn.WriteTo(buf[:n], clientAddr)
-			if err != nil {
-				log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
-			} else {
-				//log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
-			}
-		}
-		clientsMu.Unlock()
 	}
 }
 
@@ -542,7 +568,8 @@ func main() {
 
 		videos := make(map[string]string)
 		streams := make(map[string]*bufio.Reader)
-		err := LoadJSONToMap("streams.json", videos)
+		LoadJSONToMap("streams.json", videos)
+
 		ffmpegCommands, err := prepareFFmpegCommands(videos)
 		if err != nil {
 			log.Fatalf("Error creating ffmpeg commands for streams: %v", err)
