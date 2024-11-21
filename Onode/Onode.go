@@ -265,6 +265,23 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 			contentName := parts[1]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
+			// Add the client address to the list if it's new
+			clientsMu.Lock()
+			found := false
+			for _, c := range clients {
+				if c.String() == clientAddr.String() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				clients = append(clients, clientAddr)
+				log.Printf("New client connected from %s", clientAddr)
+			} else {
+				log.Printf("Existing client %s reconnected", clientAddr)
+			}
+			clientsMu.Unlock()
+
 			if streams[contentName] == nil {
 				reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
 				if err != nil {
@@ -273,31 +290,31 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 				streams[contentName] = reader
 
 				defer cleanup()
-			}
 
-			// Send RTP packets and handle errors
-			go func() {
-				err := sendRTPPackets(conn, streams[contentName], clientAddr)
-				if err != nil {
-					log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
+				// Send RTP packets and handle errors
+				go func() {
+					err := sendRTPPackets(conn, streams[contentName], clientAddr)
+					if err != nil {
+						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
-					// Restart the stream if it has ended
-					if err.Error() == "end of stream reached" {
-						log.Printf("Restarting stream for content \"%s\"", contentName)
+						// Restart the stream if it has ended
+						if err.Error() == "end of stream reached" {
+							log.Printf("Restarting stream for content \"%s\"", contentName)
 
-						reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
-						if err != nil {
-							log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
+							reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
+							if err != nil {
+								log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
+							}
+
+							streams[contentName] = reader
+							defer cleanup()
+
+							// Restart sending RTP packets
+							sendRTPPackets(conn, reader, clientAddr)
 						}
-
-						streams[contentName] = reader
-						defer cleanup()
-
-						// Restart sending RTP packets
-						sendRTPPackets(conn, reader, clientAddr)
 					}
-				}
-			}()
+				}()
+			}
 
 		default:
 			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
@@ -358,16 +375,19 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Ad
 			return fmt.Errorf("failed to marshal RTP packet: %w", err)
 		}
 
-		// Send the packet to the specific target client
-		_, err = conn.WriteTo(packetData, targetClient)
-		if err != nil {
-			log.Printf("Failed to send packet to %v: %v", targetClient, err)
-			return fmt.Errorf("failed to send packet to %v: %w", targetClient, err)
-		} else {
-			// Log packet details after successful send
-			log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-				targetClient, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+		// Send the packet to all connected clients
+		clientsMu.Lock() // Lock the client list for safe access
+		for _, client := range clients {
+			_, err := conn.WriteTo(packetData, client)
+			if err != nil {
+				log.Printf("Failed to send packet to %v: %v", client, err)
+			} else {
+				// Log packet details after successful send
+				log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+					client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+			}
 		}
+		clientsMu.Unlock() // Unlock the client list
 
 		// Increment sequence number for the next packet
 		seqNumber++
