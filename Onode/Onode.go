@@ -134,7 +134,7 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 	buf := make([]byte, 1024)
 
 	for {
-		n, clientAddr, err := protocolConn.ReadFrom(buf)
+		n, clientAddr, err := protocolConn.ReadFrom(buf) // porta 8000
 		if err != nil || n == 0 {
 			log.Printf("Error reading client connection request: %v", err)
 			continue
@@ -200,7 +200,7 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 				streamConnMu.Unlock()
 
 				// Send the content request to the appropriate stream connection
-				err = sendContentRequest(streamConnIn, contentName)
+				err = sendContentRequest(streamConnIn, contentName) // escrever na porta 8000 do vizinho
 				if err != nil {
 					log.Printf("Failed to request content \"%s\" for client %s: %v", contentName, clientAddr, err)
 					continue // Skip forwarding if content request fails
@@ -465,6 +465,43 @@ func LoadJSONToMap(filename string, data map[string]string) error {
 	return nil
 }
 
+// Function to extract the first element and return the rest
+// Function to extract the first element and return the rest as JSON
+func ExtractFirstElement(jsonData []byte) (string, []byte, error) {
+	// Unmarshal the JSON into a slice of strings
+	var data []string
+	err := json.Unmarshal(jsonData, &data)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Check if the slice is empty
+	if len(data) == 0 {
+		return "", nil, fmt.Errorf("empty JSON array")
+	}
+
+	// Extract the first element and the rest of the slice
+	first := data[0]
+	rest := data[1:]
+
+	// Marshal the remaining elements back to JSON
+	restJSON, err := json.Marshal(rest)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return first, restJSON, nil
+}
+func updateRoutingTable(streamFrom map[string]string, ipNextHop string) {
+	streamFrom["stream1"] = ipNextHop
+	streamFrom["stream2"] = ipNextHop
+	streamFrom["stream3"] = ipNextHop
+}
+
+func sendUpdatePacket(jsonData []byte, nextInRoute string) {
+
+}
+
 func main() {
 	// Define flags for node name, UDP port, and node type
 	nodeName := flag.String("name", "", "Node name")
@@ -506,21 +543,29 @@ func main() {
 		// 	defer infoConn.Close() // Remember to close these later
 		// }
 
-		// streamFrom [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
-		streamFrom := make(map[string]string)
-
-		// Add entries to the map
-		// TODO: arvore de distribuição aqui
-		streamFrom["stream1"] = node.Neighbors["O1"]
-		streamFrom["stream2"] = node.Neighbors["O1"]
-		streamFrom["stream3"] = node.Neighbors["O1"]
-
 		// abrir porta udp para escuta de pedidos
 		protocolConn, err := setupUDPListener(*ip, node.Port)
 		if err != nil {
 			log.Fatalf("Error setting up UDP listener: %v", err)
 		}
 		defer protocolConn.Close()
+
+		/**
+		 * ATUALIZAR TABELA E MANDAR UPDATE
+		 */
+
+		jsonUpdate := []byte(`["O1", "S1"]`)
+		// Call the function
+		first, restJSON, err := ExtractFirstElement(jsonUpdate)
+
+		// streamFrom [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
+		streamFrom := make(map[string]string)
+		nextInRouteIp := node.Neighbors[first]
+		// Add entries to the map
+		// TODO: arvore de distribuição aqui
+		updateRoutingTable(streamFrom, nextInRouteIp)
+
+		sendUpdatePacket(restJSON, nextInRouteIp)
 
 		// esperar por conexao
 		go handleClientConnectionsPOP(protocolConn, streamFrom)
