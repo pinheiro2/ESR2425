@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -142,10 +143,10 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-func handleClientConnectionsPOP(conn *net.UDPConn, connections map[string]*net.UDPConn) {
+func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamConnectionsIn map[string]*net.UDPConn) {
 	buf := make([]byte, 1024)
 	for {
-		n, clientAddr, err := conn.ReadFrom(buf)
+		n, clientAddr, err := protocolConn.ReadFrom(buf)
 		if err != nil || n == 0 {
 			log.Printf("Error reading client connection request: %v", err)
 			continue
@@ -192,9 +193,15 @@ func handleClientConnectionsPOP(conn *net.UDPConn, connections map[string]*net.U
 			}
 			contentName := parts[1]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
-			// Handle content request here (e.g., start sending content or fetch the requested item)
-			sendContentRequest(connections["S1"], contentName)
-			go forwardToClient(conn, connections["S1"], clientAddr)
+
+			// Send the content request to the appropriate stream connection
+			err := sendContentRequest(streamConnectionsIn[contentName], contentName)
+			if err != nil {
+				log.Printf("Failed to request content \"%s\" for client %s: %v", contentName, clientAddr, err)
+				continue // Skip forwarding if content request fails
+			}
+
+			go forwardToClient(protocolConn, streamConnectionsIn[contentName], clientAddr)
 
 		default:
 			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
@@ -204,6 +211,10 @@ func handleClientConnectionsPOP(conn *net.UDPConn, connections map[string]*net.U
 }
 
 func sendContentRequest(conn *net.UDPConn, contentName string) error {
+
+	if conn == nil {
+		return fmt.Errorf("connection is nil; cannot send request for content: %s", contentName)
+	}
 	// Prefix the content name with "Request:"
 	message := "REQUEST " + contentName
 
@@ -212,7 +223,7 @@ func sendContentRequest(conn *net.UDPConn, contentName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to send content name: %w", err)
 	}
-	fmt.Printf("Requested content: %s\n", contentName)
+	log.Printf("Requested content: %s\n", contentName)
 	return nil
 }
 
@@ -276,100 +287,83 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 
 				defer cleanup()
 			}
-			sendRTPPackets(conn, streams[contentName])
+
+			go sendRTPPackets(conn, streams[contentName], clientAddr)
 		default:
 			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
 		}
 	}
 }
 
-// Handles client connections by listening for connection requests
-// func handleClientConnections_old(conn *net.UDPConn) {
-// 	buf := make([]byte, 1024)
-// 	for {
-// 		n, clientAddr, err := conn.ReadFrom(buf)
-// 		if err != nil || n == 0 {
-// 			log.Printf("Error reading client connection request: %v", err)
-// 			continue
-// 		}
-
-// 		// Read the message from the buffer as a string
-// 		clientMessage := string(buf[:n])
-// 		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
-
-// 		// Log every client connection attempt
-// 		log.Printf("Connection attempt from client at %s", clientAddr)
-
-// 		// Add the client address to the list if it's new
-// 		clientsMu.Lock()
-// 		found := false
-// 		for _, c := range clients {
-// 			if c.String() == clientAddr.String() {
-// 				found = true
-// 				break
-// 			}
-// 		}
-// 		if !found {
-// 			clients = append(clients, clientAddr)
-// 			log.Printf("New client connected from %s", clientAddr)
-// 		} else {
-// 			log.Printf("Existing client %s reconnected", clientAddr)
-// 		}
-// 		clientsMu.Unlock()
-// 	}
-// }
-
-// Sends RTP packets to connected clients with logging
-func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader) {
+// Sends RTP packets to a specific client with logging
+func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Addr) {
 	seqNumber := uint16(0)
 	ssrc := uint32(1234)
 	payloadType := uint8(96) // Dynamic payload type for video
+	maxBufferSize := 65535   // Maximum allowable RTP payload size
 
 	for {
+		// Read one frame from the reader
 		var buf bytes.Buffer
 		for {
 			b, err := reader.ReadByte()
 			if err != nil {
-				log.Println("End of video or error reading frame:", err)
+				if err == io.EOF {
+					log.Println("End of stream reached.")
+				} else {
+					log.Printf("Error reading byte: %v", err)
+				}
 				return
 			}
+
 			buf.WriteByte(b)
+
+			// Detect end of JPEG frame (FF D9 marks the end of a JPEG frame)
 			if buf.Len() > 2 && buf.Bytes()[buf.Len()-2] == 0xFF && buf.Bytes()[buf.Len()-1] == 0xD9 {
 				break
 			}
+
+			// Check buffer size to prevent overflows
+			if buf.Len() > maxBufferSize {
+				log.Printf("Frame exceeds max buffer size (%d bytes). Discarding.", maxBufferSize)
+				return
+			}
 		}
 
+		// Construct the RTP packet
 		packet := &rtp.Packet{
 			Header: rtp.Header{
-				Marker:         true,
+				Marker:         true, // Indicates the end of a frame
 				PayloadType:    payloadType,
 				SequenceNumber: seqNumber,
-				Timestamp:      uint32(time.Now().UnixNano() / 1e6),
-				SSRC:           ssrc,
+				Timestamp:      uint32(time.Now().UnixNano() / 1e6), // Current timestamp in milliseconds
+				SSRC:           ssrc,                                // Synchronization source identifier
 			},
 			Payload: buf.Bytes(),
 		}
 
+		// Marshal the RTP packet into bytes
 		packetData, err := packet.Marshal()
 		if err != nil {
-			log.Fatalf("Failed to marshal RTP packet: %v", err)
+			log.Printf("Failed to marshal RTP packet: %v", err)
+			continue // Skip this frame if marshaling fails
 		}
 
-		clientsMu.Lock()
-		for _, clientAddr := range clients {
-			_, err := conn.WriteTo(packetData, clientAddr)
-			if err != nil {
-				log.Printf("Failed to send packet to %v: %v", clientAddr, err)
-			} else {
-				// Log packet details after successful send
-				log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-					clientAddr, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
-			}
+		// Send the packet to the specific target client
+		_, err = conn.WriteTo(packetData, targetClient)
+		if err != nil {
+			log.Printf("Failed to send packet to %v: %v", targetClient, err)
+		} else {
+			// Log packet details after successful send
+			log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+				targetClient, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
 		}
-		clientsMu.Unlock()
 
+		// Increment sequence number for the next packet
 		seqNumber++
-		time.Sleep(time.Millisecond * 33) // Approx. 30 FPS
+
+		// Wait for the next frame (approximately 30 FPS)
+		time.Sleep(time.Millisecond * 33)
 	}
 }
 
@@ -495,35 +489,43 @@ func main() {
 			defer infoConn.Close() // Remember to close these later
 		}
 
-		// streamConnectionsIn := make(map[string]*net.UDPConn)
+		streamFrom := make(map[string]string)
+
+		// Add entries to the map
+		// TODO: arvore de distribuição aqui
+		streamFrom["stream1"] = "S1"
+		streamFrom["stream2"] = "S1"
+		streamFrom["stream3"] = "S1"
+
+		streamConnectionsIn := make(map[string]*net.UDPConn)
 		// streamConnectionsOut := make(map[string]*net.UDPConn)
 
-		// for stream := range node.Neighbors {
-		// 	streamConnIn, err := setupUDPConnection(neighborIP, 8000)
-		// 	streamConnOut, err := setupUDPConnection(neighborIP, 8000)
-		// 	if err != nil {
-		// 		log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
-		// 	}
-		// 	// log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
-		// 	streamConnectionsIn[stream] = streamConnIn
-		// 	streamConnectionsOut[stream] = streamConnOut
+		for stream, neighbor := range streamFrom {
+			streamConnIn, err := setupUDPConnection(node.Neighbors[neighbor], 8000)
+			// streamConnOut, err := setupUDPConnection(neighbor, 8000)
+			if err != nil {
+				log.Fatalf("Error setting up UDP connection to %s (%s): %v", err)
+			}
+			// log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
+			streamConnectionsIn[stream] = streamConnIn
+			// streamConnectionsOut[stream] = streamConnOut
 
-		// 	cleanup := func() {
-		// 		streamConnIn.Close()  // Remember to close these later
-		// 		streamConnOut.Close() // Remember to close these later
-		// 	}
-		// 	defer cleanup()
-		// }
+			cleanup := func() {
+				streamConnIn.Close() // Remember to close these later
+				// streamConnOut.Close() // Remember to close these later
+			}
+			defer cleanup()
+		}
 
 		// abrir porta udp para escuta de pedidos
-		conn, err := setupUDPListener(*ip, node.Port)
+		protocolConn, err := setupUDPListener(*ip, node.Port)
 		if err != nil {
 			log.Fatalf("Error setting up UDP listener: %v", err)
 		}
-		defer conn.Close()
+		defer protocolConn.Close()
 
 		// esperar por conexao
-		go handleClientConnectionsPOP(conn, connections)
+		go handleClientConnectionsPOP(protocolConn, streamConnectionsIn)
 
 		select {}
 	case "Node":
