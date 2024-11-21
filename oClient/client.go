@@ -245,33 +245,51 @@ func startFFPlay() (*exec.Cmd, io.WriteCloser, error) {
 	return ffplayCmd, ffplayIn, nil
 }
 
-func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser) {
+func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser, done chan struct{}) {
 	packet := &rtp.Packet{}
 
 	for {
-		buf := make([]byte, 150000)
+		select {
+		case <-done:
+			log.Println("Stream has ended, closing client.")
+			return
+		default:
+			buf := make([]byte, 150000)
 
-		n, _, err := conn.ReadFrom(buf)
-		if err != nil {
-			log.Printf("Error reading from UDP: %v", err)
-			continue
+			n, _, err := conn.ReadFrom(buf)
+			if err != nil {
+				if isTimeoutError(err) {
+					log.Println("Stream ended due to timeout.")
+					close(done) // Notify other parts of the program
+					return
+				}
+				log.Printf("Error reading from UDP: %v", err)
+				continue
+			}
+
+			if err := packet.Unmarshal(buf[:n]); err != nil {
+				log.Printf("Failed to unmarshal RTP packet: %v", err)
+				continue
+			}
+
+			_, err = ffplayIn.Write(packet.Payload)
+			if err != nil {
+				log.Printf("Failed to write to ffplay: %v", err)
+				break
+			}
+
+			fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
+			time.Sleep(time.Millisecond * 33) // Simulate 30 FPS playback
 		}
-
-		if err := packet.Unmarshal(buf[:n]); err != nil {
-			log.Printf("Failed to unmarshal RTP packet: %v", err)
-			continue
-		}
-
-		_, err = ffplayIn.Write(packet.Payload)
-		if err != nil {
-			log.Printf("Failed to write to ffplay: %v", err)
-			break
-		}
-
-		fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
-		time.Sleep(time.Millisecond * 33)
 	}
 }
+func isTimeoutError(err error) bool {
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+	return false
+}
+
 func sendContentRequest(conn *net.UDPConn, contentName string) error {
 	// Prefix the content name with "Request:"
 	message := "REQUEST " + contentName
@@ -284,7 +302,6 @@ func sendContentRequest(conn *net.UDPConn, contentName string) error {
 	fmt.Printf("Requested content: %s\n", contentName)
 	return nil
 }
-
 func main() {
 	nodes, err := loadNodesFromFile("test.json")
 	if err != nil {
@@ -301,7 +318,6 @@ func main() {
 
 	// Define the port flag and parse the command-line arguments
 	stream := flag.String("stream", "stream1", "stream to connect to")
-
 	popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
 	port := flag.Int("port", 8000, "UDP port to connect to on the server")
 	flag.Parse()
@@ -313,7 +329,7 @@ func main() {
 	}
 	defer conn.Close()
 
-	// wait 2 seconds to request for testing purpose
+	// Wait 2 seconds to request for testing purpose
 	time.Sleep(2 * time.Second)
 
 	// Send the content name request
@@ -327,10 +343,23 @@ func main() {
 		log.Fatalf("Error starting ffplay: %v", err)
 	}
 	defer ffplayIn.Close()
+	// Use a channel to signal when the stream ends
+	done := make(chan struct{})
 
-	receiveAndDisplayRTPPackets(conn, ffplayIn)
+	// Start receiving and displaying RTP packets
+	go receiveAndDisplayRTPPackets(conn, ffplayIn, done)
 
+	// Wait for the stream to end or the ffplay process to exit
+	select {
+	case <-done:
+		log.Println("Stream ended, shutting down.")
+	case <-time.After(10 * time.Second): // Optional timeout for long streams
+		log.Println("Stream timeout reached, shutting down.")
+		close(done)
+	}
+
+	// Wait for ffplay to exit gracefully
 	if err := ffplayCmd.Wait(); err != nil {
-		log.Fatalf("ffplay exited with error: %v", err)
+		log.Printf("ffplay exited with error: %v", err)
 	}
 }
