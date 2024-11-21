@@ -27,7 +27,7 @@ type Node struct {
 }
 
 var (
-	clients             []net.Addr
+	clients             map[string][]net.Addr
 	clientsMu           sync.Mutex // Mutex to protect the client list
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
@@ -129,7 +129,10 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 		streamConnectionsIn = make(map[string]*net.UDPConn)
 	}
 
+	clients := make(map[string][]net.Addr)
+
 	buf := make([]byte, 1024)
+
 	for {
 		n, clientAddr, err := protocolConn.ReadFrom(buf)
 		if err != nil || n == 0 {
@@ -162,14 +165,16 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 			// Add the client address to the list if it's new
 			clientsMu.Lock()
 			found := false
-			for _, c := range clients {
+			for _, c := range clients[contentName] {
 				if c.String() == clientAddr.String() {
 					found = true
 					break
 				}
 			}
 			if !found {
-				clients = append(clients, clientAddr)
+
+				clientsL := append(clients[contentName], clientAddr)
+				clients[contentName] = clientsL
 				log.Printf("New client connected from %s", clientAddr)
 			} else {
 				log.Printf("Existing client %s reconnected", clientAddr)
@@ -204,7 +209,7 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 				log.Printf("New connection established for content \"%s\"", contentName)
 
 				// Forward the stream to the client
-				go forwardToClients(protocolConn, streamConnIn)
+				go forwardToClients(protocolConn, streamConnIn, contentName, clients)
 			} else {
 				log.Printf("Reusing existing connection for content \"%s\"", contentName)
 			}
@@ -234,6 +239,8 @@ func sendContentRequest(conn *net.UDPConn, contentName string) error {
 }
 
 func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
+	clients := make(map[string][]net.Addr)
+
 	buf := make([]byte, 1024)
 	for {
 		n, clientAddr, err := conn.ReadFrom(buf)
@@ -268,14 +275,16 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 			// Add the client address to the list if it's new
 			clientsMu.Lock()
 			found := false
-			for _, c := range clients {
+			for _, c := range clients[contentName] {
 				if c.String() == clientAddr.String() {
 					found = true
 					break
 				}
 			}
 			if !found {
-				clients = append(clients, clientAddr)
+				clientsL := append(clients[contentName], clientAddr)
+				clients[contentName] = clientsL
+
 				log.Printf("New client connected from %s", clientAddr)
 			} else {
 				log.Printf("Existing client %s reconnected", clientAddr)
@@ -290,30 +299,33 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 				streams[contentName] = reader
 
 				defer cleanup()
+				log.Printf("LIST OF CLIENTS: %s", clients[contentName])
+
+				go sendRTPPackets(conn, reader, contentName, clients)
 
 				// Send RTP packets and handle errors
-				go func() {
-					err := sendRTPPackets(conn, streams[contentName], clientAddr)
-					if err != nil {
-						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
+				// go func() {
+				// 	err := sendRTPPackets(conn, streams[contentName], contentName)
+				// 	if err != nil {
+				// 		log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
-						// Restart the stream if it has ended
-						if err.Error() == "end of stream reached" {
-							log.Printf("Restarting stream for content \"%s\"", contentName)
+				// 		// Restart the stream if it has ended
+				// 		if err.Error() == "end of stream reached" {
+				// 			log.Printf("Restarting stream for content \"%s\"", contentName)
 
-							reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
-							if err != nil {
-								log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
-							}
+				// 			reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
+				// 			if err != nil {
+				// 				log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
+				// 			}
 
-							streams[contentName] = reader
-							defer cleanup()
+				// 			streams[contentName] = reader
+				// 			defer cleanup()
 
-							// Restart sending RTP packets
-							sendRTPPackets(conn, reader, clientAddr)
-						}
-					}
-				}()
+				// 			// Restart sending RTP packets
+				// 			sendRTPPackets(conn, reader, contentName)
+				// 		}
+				// 	}
+				// }()
 			}
 
 		default:
@@ -322,7 +334,7 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 	}
 }
 
-func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Addr) error {
+func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, clients map[string][]net.Addr) error {
 	seqNumber := uint16(0)
 	ssrc := uint32(1234)
 	payloadType := uint8(96) // Dynamic payload type for video
@@ -376,8 +388,11 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, targetClient net.Ad
 		}
 
 		// Send the packet to all connected clients
+		// log.Printf("Trying to send packet to %v", clients[contentName])
+
 		clientsMu.Lock() // Lock the client list for safe access
-		for _, client := range clients {
+		for _, client := range clients[contentName] {
+
 			_, err := conn.WriteTo(packetData, client)
 			if err != nil {
 				log.Printf("Failed to send packet to %v: %v", client, err)
@@ -412,7 +427,7 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 }
 
 // Forwards data from content server to connected clients (used by POP)
-func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
+func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn, contentName string, clients map[string][]net.Addr) {
 	buf := make([]byte, 150000)
 	for {
 		n, _, err := contentConn.ReadFromUDP(buf)
@@ -424,7 +439,7 @@ func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn) {
 		//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
 
 		clientsMu.Lock()
-		for _, clientAddr := range clients {
+		for _, clientAddr := range clients[contentName] {
 			_, err := conn.WriteTo(buf[:n], clientAddr)
 			if err != nil {
 				log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
