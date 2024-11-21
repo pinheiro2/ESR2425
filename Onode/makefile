@@ -21,7 +21,7 @@ cs:
 
 # Run the Point of Presence (POP)
 node:
-	$(GO) run $(ONODE) -name $(NODE_NAME) -ip $(NODE_IP_IP) -type NODE
+	$(GO) run $(ONODE) -name $(NODE_NAME) -ip $(NODE_IP) -type NODE
 
 
 # Run the Point of Presence (POP)
