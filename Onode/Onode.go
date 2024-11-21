@@ -31,7 +31,6 @@ var (
 	clientsMu           sync.Mutex // Mutex to protect the client list
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
-	videos              map[string]string
 )
 
 // Initializes the node and retrieves the neighbor list from the bootstrap server
@@ -524,7 +523,7 @@ func main() {
 		streams := make(map[string]*bufio.Reader)
 		LoadJSONToMap("streams.json", videos)
 
-		ffmpegCommands, err := prepareFFmpegCommands()
+		ffmpegCommands, err := prepareFFmpegCommands(videos)
 		if err != nil {
 			log.Fatalf("Error creating ffmpeg commands for streams: %v", err)
 		}
