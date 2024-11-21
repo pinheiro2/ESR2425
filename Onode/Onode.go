@@ -27,8 +27,6 @@ type Node struct {
 }
 
 var (
-	clients             []net.Addr
-	clientsMu           sync.Mutex // Mutex to protect the client list
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
 
@@ -152,26 +150,6 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
-		case "CONNECT":
-			log.Printf("CONNECT request from client %s", clientAddr)
-
-			// Add the client address to the list if it's new
-			clientsMu.Lock()
-			found := false
-			for _, c := range clients {
-				if c.String() == clientAddr.String() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				clients = append(clients, clientAddr)
-				log.Printf("New client connected from %s", clientAddr)
-			} else {
-				log.Printf("Existing client %s reconnected", clientAddr)
-			}
-			clientsMu.Unlock()
-
 		case "REQUEST":
 			if len(parts) < 2 {
 				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
@@ -260,45 +238,6 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
-		case "CONNECT":
-			log.Printf("CONNECT request from client %s", clientAddr)
-
-			// Add the client address to the list if it's new
-			clientsMu.Lock()
-			found := false
-			for _, c := range clients {
-				if c.String() == clientAddr.String() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				clients = append(clients, clientAddr)
-				log.Printf("New client connected from %s", clientAddr)
-			} else {
-				log.Printf("Existing client %s reconnected", clientAddr)
-			}
-			clientsMu.Unlock()
-
-		case "REQUEST1":
-			if len(parts) < 2 {
-				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
-				continue
-			}
-			contentName := parts[1]
-			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
-			// Handle content request here (e.g., start sending content or fetch the requested item)
-			if streams[contentName] == nil {
-				reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
-				if err != nil {
-					log.Fatalf("Error initializing ffmpeg: %v", err)
-				}
-				streams[contentName] = reader
-
-				defer cleanup()
-			}
-
-			go sendRTPPackets(conn, streams[contentName], clientAddr)
 		case "REQUEST":
 			if len(parts) < 2 {
 				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
@@ -430,12 +369,6 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	// Send initial connection request
-	// _, err = conn.Write([]byte("CONNECT"))
-	// if err != nil {
-	// 	conn.Close()
-	// 	return nil, fmt.Errorf("failed to send connection request: %w", err)
-	// }
 	fmt.Println("Sent connection request to server")
 	return conn, nil
 }
