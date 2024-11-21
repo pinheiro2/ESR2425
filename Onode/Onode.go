@@ -83,6 +83,8 @@ func prepareFFmpegCommands(videos map[string]string) (map[string]*exec.Cmd, erro
 	return ffmpegMap, nil
 }
 
+// Starts ffmpeg to output video frames as JPEGs for Content Server
+
 func startFFmpeg(ffmpegMap map[string]*exec.Cmd, stream string) (*bufio.Reader, func(), error) {
 	ffmpegCmd, exists := ffmpegMap[stream]
 	if !exists {
@@ -100,31 +102,6 @@ func startFFmpeg(ffmpegMap map[string]*exec.Cmd, stream string) (*bufio.Reader, 
 
 	log.Printf("Started streaming %s", stream)
 
-	cleanup := func() {
-		ffmpegOut.Close()
-		ffmpegCmd.Wait()
-	}
-
-	return bufio.NewReader(ffmpegOut), cleanup, nil
-}
-
-// Starts ffmpeg to output video frames as JPEGs for Content Server
-func startFFmpeg_old(video string) (*bufio.Reader, func(), error) {
-	ffmpegCmd := exec.Command("ffmpeg",
-		"-i", video, // Input file
-		"-f", "image2pipe", // Output format for piping images
-		"-vcodec", "mjpeg", // Encode as JPEG
-		"-q:v", "2", // Quality (lower is better)
-		"pipe:1") // Output to stdout
-
-	ffmpegOut, err := ffmpegCmd.StdoutPipe()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get ffmpeg stdout: %w", err)
-	}
-
-	if err := ffmpegCmd.Start(); err != nil {
-		return nil, nil, fmt.Errorf("failed to start ffmpeg: %w", err)
-	}
 	cleanup := func() {
 		ffmpegOut.Close()
 		ffmpegCmd.Wait()
@@ -540,6 +517,7 @@ func main() {
 		// 	defer infoConn.Close() // Remember to close these later
 		// }
 
+		// streamFrom [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
 		streamFrom := make(map[string]string)
 
 		// Add entries to the map
