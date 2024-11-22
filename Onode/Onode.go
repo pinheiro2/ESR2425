@@ -263,7 +263,7 @@ func sendContentRequest(conn *net.UDPConn, contentName string) error {
 	return nil
 }
 
-func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
+func handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
 	clients := make(map[string][]net.Addr)
 
 	buf := make([]byte, 1024)
@@ -647,7 +647,7 @@ func main() {
 		}
 		defer conn.Close()
 
-		go handleClientConnectionsCS(conn, streams, ffmpegCommands)
+		go handleConnectionsCS(conn, streams, ffmpegCommands)
 
 		select {}
 
