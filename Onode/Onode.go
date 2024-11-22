@@ -64,6 +64,15 @@ func (node *Node) initialize(bootstrapAddress string) {
 	fmt.Printf("Node %s (Type: %s) - Stored neighbors: %v\n", node.Name, node.Type, node.Neighbors)
 }
 
+func handleError(err error, errMsg string, args ...interface{}) bool {
+	if err != nil {
+		log.Printf(errMsg, args...)
+		log.Printf("Error details: %v", err)
+		return true
+	}
+	return false
+}
+
 func prepareFFmpegCommands(videos map[string]string) (map[string]*exec.Cmd, error) {
 	ffmpegMap := make(map[string]*exec.Cmd)
 
@@ -171,6 +180,7 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
+
 		case "UPDATE":
 			if len(parts) < 2 {
 				log.Printf("UPDATE command from client %s is missing data", clientAddr)
@@ -181,22 +191,39 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 			updateData := []byte(updateDataString)
 
 			var newRoutes []string
-			err := json.Unmarshal(updateData, &newRoutes)
-			if err != nil {
-				log.Printf("Failed to parse UPDATE data from client %s: %v", clientAddr, err)
+			if handleError(json.Unmarshal(updateData, &newRoutes), "Failed to parse UPDATE data from client %s", clientAddr) {
 				continue
 			}
 
 			log.Printf("Received UPDATE from %s: %v", clientAddr, newRoutes)
 
-			// Call the function
+			// Call the ExtractFirstElement function
 			first, restJSON, err := ExtractFirstElement(updateData)
+			if handleError(err, "Failed to extract first element from UPDATE data from client %s", clientAddr) {
+				continue
+			}
 
+			// Get the next-in-route IP address
 			nextInRouteIp, err := getNextInRouteAddr(neighbors[first])
+			if handleError(err, "Failed to resolve next-in-route IP for \"%s\" from client %s", first, clientAddr) {
+				continue
+			}
 
+			// Check if the neighbor exists
+			if _, exists := neighbors[first]; !exists {
+				log.Printf("Neighbor \"%s\" does not exist in the routing table. Cannot update.", first)
+				continue
+			}
+
+			// Update the routing table
 			updateRoutingTable(routingTable, neighbors[first])
 
-			sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
+			// Send the update packet
+			if handleError(sendUpdatePacket(protocolConn, restJSON, nextInRouteIp), "Failed to send update packet to %s for \"%s\"", nextInRouteIp, first) {
+				continue
+			}
+
+			log.Printf("Successfully processed UPDATE for \"%s\" and forwarded to %s", first, nextInRouteIp)
 
 		case "REQUEST":
 			if len(parts) < 2 {
@@ -581,33 +608,44 @@ func main() {
 
 	switch node.Type {
 	case "POP":
-
-		// abrir porta udp para escuta de pedidos
+		// Set up the UDP listener for requests
 		protocolConn, err := setupUDPListener(*ip, node.Port)
-		if err != nil {
-			log.Fatalf("Error setting up UDP listener: %v", err)
+		if handleError(err, "Error setting up UDP listener on port %d", node.Port) {
+			return
 		}
 		defer protocolConn.Close()
 
-		// ATUALIZAR TABELA E MANDAR UPDATE
-
-		jsonUpdate := []byte(`["O1", "S1"]`)
-		// Call the function
-		first, restJSON, err := ExtractFirstElement(jsonUpdate)
-
-		// routingTable [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
+		// Initialize the routing table
 		routingTable := make(map[string]string)
-		nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
 
-		// Add entries to the map
-		// TODO: arvore de distribuição aqui
+		// Example JSON update: Define the initial update
+		jsonUpdate := []byte(`["O1", "S1"]`)
+
+		// Extract the first element and the remaining JSON
+		first, restJSON, err := ExtractFirstElement(jsonUpdate)
+		if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
+			return
+		}
+
+		// Get the next-in-route IP for the first element
+		nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
+		if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
+			return
+		}
+
+		// Update the routing table with the neighbor's IP
 		updateRoutingTable(routingTable, node.Neighbors[first])
 
-		sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
+		// Send the update packet to the next hop
+		err = sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
+		if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
+			return
+		}
 
-		// esperar por conexao
+		// Start handling incoming connections
 		go handleConnectionsPOP(protocolConn, routingTable, node.Neighbors)
 
+		// Block indefinitely to keep the node running
 		select {}
 
 	case "NODE":
