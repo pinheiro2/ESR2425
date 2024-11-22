@@ -1,7 +1,7 @@
 # Variables
 GO := go
 CLIENT := client.go
-POP_IP := 10.0.3.2
+POP_IP := 10.0.11.2
 STREAM := $(or $(stream), stream1) # Default value is 'stream1'
 
 # Targets
