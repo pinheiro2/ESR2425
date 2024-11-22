@@ -123,7 +123,7 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-func handleClientConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
+func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
 	// Initialize the map if it's nil
 	if streamConnectionsIn == nil {
 		streamConnectionsIn = make(map[string]*net.UDPConn)
@@ -624,7 +624,7 @@ func main() {
 		sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
 
 		// esperar por conexao
-		go handleClientConnectionsPOP(protocolConn, routingTable, node.Neighbors)
+		go handleConnectionsPOP(protocolConn, routingTable, node.Neighbors)
 
 		select {}
 
@@ -643,7 +643,7 @@ func main() {
 		defer protocolConn.Close()
 
 		// esperar por conexao
-		go handleClientConnectionsPOP(protocolConn, routingTable, node.Neighbors)
+		go handleConnectionsPOP(protocolConn, routingTable, node.Neighbors)
 
 		select {}
 
