@@ -149,7 +149,7 @@ func addClientAddress(contentName string, clientAddr net.Addr, clients map[strin
 	log.Printf("New client connected from %s for content \"%s\"", clientAddr, contentName)
 }
 
-func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
+func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string, popOfRoute string) {
 	// Initialize the map if it's nil
 	if streamConnectionsIn == nil {
 		streamConnectionsIn = make(map[string]*net.UDPConn)
@@ -182,12 +182,14 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 		switch command {
 
 		case "UPDATE":
-			if len(parts) < 2 {
+			if len(parts) < 3 {
 				log.Printf("UPDATE command from client %s is missing data", clientAddr)
 				continue
 			}
 
-			updateDataString := strings.Join(parts[1:], " ") // Extract the JSON data
+			popOfRoute := parts[1]
+
+			updateDataString := strings.Join(parts[2:], " ") // Extract the JSON data
 			updateData := []byte(updateDataString)
 
 			var newRoutes []string
@@ -216,10 +218,10 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 			}
 
 			// Update the routing table
-			updateRoutingTable(routingTable, neighbors[first])
+			updateRoutingTable(routingTable, popOfRoute, neighbors[first])
 
 			// Send the update packet
-			if handleError(sendUpdatePacket(protocolConn, restJSON, nextInRouteIp), "Failed to send update packet to %s for \"%s\"", nextInRouteIp, first) {
+			if handleError(sendUpdatePacket(protocolConn, first, restJSON, nextInRouteIp), "Failed to send update packet to %s for \"%s\"", nextInRouteIp, first) {
 				continue
 			}
 
@@ -231,6 +233,12 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 				continue
 			}
 			contentName := parts[1]
+
+			// Check if the content name exists in the routing table
+			if _, exists := routingTable[contentName]; !exists {
+				log.Printf("Content \"%s\" not found in the routing table. Skipping request from client %s", contentName, clientAddr)
+				continue
+			}
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
 			addClientAddress(contentName, clientAddr, clients, &clientsMu)
@@ -253,7 +261,7 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 				streamConnMu.Unlock()
 
 				// Send the content request to the appropriate stream connection
-				err = sendContentRequest(streamConnIn, contentName) // escrever na porta 8000 do vizinho
+				err = sendContentRequest(streamConnIn, contentName, popOfRoute) // escrever na porta 8000 do vizinho
 				if err != nil {
 					log.Printf("Failed to request content \"%s\" for client %s: %v", contentName, clientAddr, err)
 					continue // Skip forwarding if content request fails
@@ -273,13 +281,140 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 	}
 }
 
-func sendContentRequest(conn *net.UDPConn, contentName string) error {
+func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
+	// Initialize the map if it's nil
+	if streamConnectionsIn == nil {
+		streamConnectionsIn = make(map[string]*net.UDPConn)
+	}
+
+	clients := make(map[string][]net.Addr)
+
+	buf := make([]byte, 1024)
+
+	for {
+		n, clientAddr, err := protocolConn.ReadFrom(buf) // porta 8000
+		if err != nil || n == 0 {
+			log.Printf("Error reading client connection request: %v", err)
+			continue
+		}
+
+		// Read the message from the buffer as a string
+		clientMessage := string(buf[:n])
+		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
+
+		// Split the message into parts by whitespace
+		parts := strings.Fields(clientMessage)
+		if len(parts) == 0 {
+			log.Printf("Received empty message from client %s", clientAddr)
+			continue
+		}
+
+		// Parse the command and handle each case
+		command := parts[0]
+		switch command {
+
+		case "UPDATE":
+			if len(parts) < 3 {
+				log.Printf("UPDATE command from client %s is missing data", clientAddr)
+				continue
+			}
+
+			popOfRoute := parts[1]
+
+			updateDataString := strings.Join(parts[2:], " ") // Extract the JSON data
+			updateData := []byte(updateDataString)
+
+			var newRoutes []string
+			if handleError(json.Unmarshal(updateData, &newRoutes), "Failed to parse UPDATE data from client %s", clientAddr) {
+				continue
+			}
+
+			log.Printf("Received UPDATE from %s: %v", clientAddr, newRoutes)
+
+			// Call the ExtractFirstElement function
+			first, restJSON, err := ExtractFirstElement(updateData)
+			if handleError(err, "Failed to extract first element from UPDATE data from client %s", clientAddr) {
+				continue
+			}
+
+			// Get the next-in-route IP address
+			nextInRouteIp, err := getNextInRouteAddr(neighbors[first])
+			if handleError(err, "Failed to resolve next-in-route IP for \"%s\" from client %s", first, clientAddr) {
+				continue
+			}
+
+			// Check if the neighbor exists
+			if _, exists := neighbors[first]; !exists {
+				log.Printf("Neighbor \"%s\" does not exist in the routing table. Cannot update.", first)
+				continue
+			}
+
+			// Update the routing table
+			updateRoutingTable(routingTable, popOfRoute, neighbors[first])
+
+			// Send the update packet
+			if handleError(sendUpdatePacket(protocolConn, first, restJSON, nextInRouteIp), "Failed to send update packet to %s for \"%s\"", nextInRouteIp, first) {
+				continue
+			}
+
+			log.Printf("Successfully processed UPDATE for \"%s\" and forwarded to %s", popOfRoute, nextInRouteIp)
+
+		case "REQUEST":
+			if len(parts) < 2 {
+				log.Printf("REQUEST command from client %s is missing a content name", clientAddr)
+				continue
+			}
+			contentName := parts[1]
+			popOfRoute := parts[2]
+			log.Printf("REQUEST for content \"%s\" from client %s", popOfRoute, clientAddr)
+
+			addClientAddress(popOfRoute, clientAddr, clients, &clientsMu)
+
+			streamConnMu.Lock()
+			streamConnIn, exists := streamConnectionsIn[popOfRoute]
+			streamConnMu.Unlock()
+
+			if !exists {
+				// Connection doesn't exist, create a new one
+				var err error
+				streamConnIn, err = setupUDPConnection(routingTable[popOfRoute], 8000)
+				if err != nil {
+					log.Fatalf("Error setting up UDP connection to %s for content \"%s\": %v", routingTable[popOfRoute], popOfRoute, err)
+				}
+
+				// Add the new connection to the map
+				streamConnMu.Lock()
+				streamConnectionsIn[popOfRoute] = streamConnIn
+				streamConnMu.Unlock()
+
+				// Send the content request to the appropriate stream connection
+				err = sendContentRequest(streamConnIn, contentName, popOfRoute) // escrever na porta 8000 do vizinho
+				if err != nil {
+					log.Printf("Failed to request content \"%s\" for client %s: %v", popOfRoute, clientAddr, err)
+					continue // Skip forwarding if content request fails
+				}
+
+				log.Printf("New connection established for content \"%s\"", popOfRoute)
+
+				// Forward the stream to the client
+				go forwardToClients(protocolConn, streamConnIn, popOfRoute, clients)
+			} else {
+				log.Printf("Reusing existing connection for content \"%s\"", popOfRoute)
+			}
+
+		default:
+			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
+		}
+	}
+}
+
+func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string) error {
 
 	if conn == nil {
 		return fmt.Errorf("connection is nil; cannot send request for content: %s", contentName)
 	}
 	// Prefix the content name with "Request:"
-	message := "REQUEST " + contentName
+	message := "REQUEST " + contentName + " " + popOfRoute
 
 	// Send the request message
 	_, err := conn.Write([]byte(message))
@@ -317,22 +452,22 @@ func handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ff
 
 		switch command {
 		case "UPDATE":
-			if len(parts) < 2 {
+			if len(parts) < 3 {
 				log.Printf("UPDATE command from client %s is missing data", clientAddr)
 				continue
 			}
 
-			updateDataString := strings.Join(parts[1:], " ") // Extract the JSON data
+			// popOfRoute := parts[1]
+
+			updateDataString := strings.Join(parts[2:], " ") // Extract the JSON data
 			updateData := []byte(updateDataString)
 
 			var newRoutes []string
-			err := json.Unmarshal(updateData, &newRoutes)
-			if err != nil {
-				log.Printf("Failed to parse UPDATE data from client %s: %v", clientAddr, err)
+			if handleError(json.Unmarshal(updateData, &newRoutes), "Failed to parse UPDATE data from client %s", clientAddr) {
 				continue
 			}
-
 			log.Printf("Received UPDATE from %s: %v", clientAddr, newRoutes)
+
 		case "REQUEST":
 			if len(parts) < 2 {
 				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
@@ -340,6 +475,7 @@ func handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ff
 			}
 
 			contentName := parts[1]
+			// popOfRoute := parts[2]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
 			addClientAddress(contentName, clientAddr, clients, &clientsMu)
@@ -352,6 +488,7 @@ func handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ff
 				streams[contentName] = reader
 
 				defer cleanup()
+
 				log.Printf("LIST OF CLIENTS: %s", clients[contentName])
 
 				go sendRTPPackets(conn, reader, contentName, clients)
@@ -539,10 +676,8 @@ func ExtractFirstElement(jsonData []byte) (string, []byte, error) {
 
 	return first, restJSON, nil
 }
-func updateRoutingTable(routingTable map[string]string, ipNextHop string) {
-	routingTable["stream1"] = ipNextHop
-	routingTable["stream2"] = ipNextHop
-	routingTable["stream3"] = ipNextHop
+func updateRoutingTable(routingTable map[string]string, valueToUpdate string, ipNextHop string) {
+	routingTable[valueToUpdate] = ipNextHop
 }
 
 func getNextInRouteAddr(nextInRouteIp string) (*net.UDPAddr, error) {
@@ -559,13 +694,14 @@ func getNextInRouteAddr(nextInRouteIp string) (*net.UDPAddr, error) {
 	}, nil
 }
 
-func sendUpdatePacket(conn *net.UDPConn, jsonData []byte, nextInRoute net.Addr) error {
+func sendUpdatePacket(conn *net.UDPConn, popOfRoute string, jsonData []byte, nextInRoute net.Addr) error {
 
 	if conn == nil {
 		return fmt.Errorf("connection is nil; cannot send update to %s", nextInRoute)
 	}
-	// Prefix the content name with "Request:"
-	message := "UPDATE "
+
+	message := fmt.Sprintf("UPDATE %s ", popOfRoute)
+
 	msgBytes := []byte(message)
 
 	finalMessage := append(msgBytes, jsonData...)
@@ -625,14 +761,14 @@ func main() {
 			return
 		}
 
-		updateRoutingTable(routingTable, node.Neighbors[first])
+		updateRoutingTable(routingTable, "stream1", node.Neighbors[first])
 
-		err = sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
+		err = sendUpdatePacket(protocolConn, node.Name, restJSON, nextInRouteIp)
 		if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
 			return
 		}
 
-		go handleConnectionsPOP(protocolConn, routingTable, node.Neighbors)
+		go handleConnectionsPOP(protocolConn, routingTable, node.Neighbors, node.Name)
 
 		// Block indefinitely to keep the node running
 		select {}
@@ -652,7 +788,7 @@ func main() {
 		defer protocolConn.Close()
 
 		// esperar por conexao
-		go handleConnectionsPOP(protocolConn, routingTable, node.Neighbors)
+		go handleConnectionsNODE(protocolConn, routingTable, node.Neighbors)
 
 		select {}
 
