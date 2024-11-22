@@ -28,6 +28,7 @@ type Node struct {
 
 var (
 	clients             map[string][]net.Addr
+	clientsNode         map[string]map[string][]net.Addr
 	clientsMu           sync.Mutex // Mutex to protect the client list
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
@@ -147,6 +148,23 @@ func addClientAddress(contentName string, clientAddr net.Addr, clients map[strin
 	// Add the client address to the list
 	clients[contentName] = append(clients[contentName], clientAddr)
 	log.Printf("New client connected from %s for content \"%s\"", clientAddr, contentName)
+}
+
+func addClientAddressNode(contentName string, popOfRoute string, clientAddr net.Addr, clientsNode map[string]map[string][]net.Addr, mu *sync.Mutex) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Check if the client address already exists for the given content
+	for _, c := range clientsNode[contentName][popOfRoute] {
+		if c.String() == clientAddr.String() {
+			log.Printf("Existing client %s reconnected for content from %s \"%s\"", clientAddr, popOfRoute, contentName)
+			return
+		}
+	}
+
+	// Add the client address to the list
+	clientsNode[contentName][popOfRoute] = append(clientsNode[contentName][popOfRoute], clientAddr)
+	log.Printf("New client connected from %s for content \"%s\"", popOfRoute, contentName)
 }
 
 func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string, popOfRoute string) {
@@ -287,7 +305,7 @@ func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]st
 		streamConnectionsIn = make(map[string]*net.UDPConn)
 	}
 
-	clients := make(map[string][]net.Addr)
+	clientsNode := make(map[string]map[string][]net.Addr)
 
 	buf := make([]byte, 1024)
 
@@ -366,9 +384,16 @@ func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]st
 			}
 			contentName := parts[1]
 			popOfRoute := parts[2]
+
 			log.Printf("REQUEST for content \"%s\" from client %s", popOfRoute, clientAddr)
 
-			addClientAddress(popOfRoute, clientAddr, clients, &clientsMu)
+			clientsMu.Lock()
+			if _, exists := clientsNode[contentName]; !exists {
+				clientsNode[contentName] = make(map[string][]net.Addr)
+			}
+			clientsMu.Unlock()
+
+			addClientAddressNode(contentName, popOfRoute, clientAddr, clientsNode, &clientsMu)
 
 			streamConnMu.Lock()
 			streamConnIn, exists := streamConnectionsIn[popOfRoute]
@@ -397,7 +422,7 @@ func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]st
 				log.Printf("New connection established for content \"%s\"", popOfRoute)
 
 				// Forward the stream to the client
-				go forwardToClients(protocolConn, streamConnIn, popOfRoute, clients)
+				go forwardToClients(protocolConn, streamConnIn, popOfRoute, clientsNode[contentName])
 			} else {
 				log.Printf("Reusing existing connection for content \"%s\"", popOfRoute)
 			}
