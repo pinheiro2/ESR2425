@@ -643,7 +643,7 @@ func main() {
 	}
 
 	// Initialize node and retrieve neighbors
-	node.initialize("localhost:8080") // Replace "localhost" with the bootstrap server IP if needed
+	node.initialize("10.0.2.2:8080") // Replace "localhost" with the bootstrap server IP if needed
 
 	// Print all neighbors
 	log.Printf("Node %s initialized with neighbors: %v", node.Name, node.Neighbors)
