@@ -581,7 +581,6 @@ func sendUpdatePacket(conn *net.UDPConn, jsonData []byte, nextInRoute net.Addr) 
 }
 
 func main() {
-	// Define flags for node name, UDP port, and node type
 	nodeName := flag.String("name", "", "Node name")
 	ip := flag.String("ip", "0.0.0.0", "IP to open on for testing")
 	port := flag.Int("port", 8000, "UDP port to listen on")
@@ -600,49 +599,39 @@ func main() {
 		Port:      *port,
 	}
 
-	// Initialize node and retrieve neighbors
-	node.initialize("10.0.2.2:8080") // Replace "localhost" with the bootstrap server IP if needed
+	node.initialize("10.0.2.2:8080")
 
-	// Print all neighbors
 	log.Printf("Node %s initialized with neighbors: %v", node.Name, node.Neighbors)
 
 	switch node.Type {
 	case "POP":
-		// Set up the UDP listener for requests
 		protocolConn, err := setupUDPListener(*ip, node.Port)
 		if handleError(err, "Error setting up UDP listener on port %d", node.Port) {
 			return
 		}
 		defer protocolConn.Close()
 
-		// Initialize the routing table
 		routingTable := make(map[string]string)
 
-		// Example JSON update: Define the initial update
 		jsonUpdate := []byte(`["O1", "S1"]`)
 
-		// Extract the first element and the remaining JSON
 		first, restJSON, err := ExtractFirstElement(jsonUpdate)
 		if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
 			return
 		}
 
-		// Get the next-in-route IP for the first element
 		nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
 		if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
 			return
 		}
 
-		// Update the routing table with the neighbor's IP
 		updateRoutingTable(routingTable, node.Neighbors[first])
 
-		// Send the update packet to the next hop
 		err = sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
 		if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
 			return
 		}
 
-		// Start handling incoming connections
 		go handleConnectionsPOP(protocolConn, routingTable, node.Neighbors)
 
 		// Block indefinitely to keep the node running
