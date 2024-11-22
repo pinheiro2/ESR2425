@@ -206,25 +206,6 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 			contentName := parts[1]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
-			// Add the client address to the list if it's new
-			// clientsMu.Lock()
-			// found := false
-			// for _, c := range clients[contentName] {
-			// 	if c.String() == clientAddr.String() {
-			// 		found = true
-			// 		break
-			// 	}
-			// }
-			// if !found {
-
-			// 	clientsL := append(clients[contentName], clientAddr)
-			// 	clients[contentName] = clientsL
-			// 	log.Printf("New client connected from %s", clientAddr)
-			// } else {
-			// 	log.Printf("Existing client %s reconnected", clientAddr)
-			// }
-			// clientsMu.Unlock()
-
 			addClientAddress(contentName, clientAddr, clients, &clientsMu)
 
 			streamConnMu.Lock()
@@ -334,24 +315,7 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 			contentName := parts[1]
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
-			// Add the client address to the list if it's new
-			clientsMu.Lock()
-			found := false
-			for _, c := range clients[contentName] {
-				if c.String() == clientAddr.String() {
-					found = true
-					break
-				}
-			}
-			if !found {
-				clientsL := append(clients[contentName], clientAddr)
-				clients[contentName] = clientsL
-
-				log.Printf("New client connected from %s", clientAddr)
-			} else {
-				log.Printf("Existing client %s reconnected", clientAddr)
-			}
-			clientsMu.Unlock()
+			addClientAddress(contentName, clientAddr, clients, &clientsMu)
 
 			if streams[contentName] == nil {
 				reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
