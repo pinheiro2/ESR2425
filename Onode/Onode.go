@@ -26,6 +26,21 @@ type Node struct {
 	Port      int               // UDP port for the node
 }
 
+type Metric struct {
+	Hops int `json:"hops"` // Number of hops or any other metric-related number
+}
+
+// NodeMetrics structure to hold the node name and associated metrics
+type NodeMetrics struct {
+	Name    string `json:"name"`    // Node name
+	Metrics Metric `json:"metrics"` // Slice of Metric structs
+}
+
+// Probing structure to hold the slice of NodeMetrics
+type Probing struct {
+	Nodes []NodeMetrics `json:"nodes"` // Slice of NodeMetrics
+}
+
 var (
 	clients             map[string][]net.Addr
 	clientsNode         map[string]map[string][]net.Addr
@@ -33,6 +48,14 @@ var (
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
 )
+
+func getAllNames(probing Probing) string {
+	var names []string
+	for _, node := range probing.Nodes {
+		names = append(names, node.Name) // Collect all node names
+	}
+	return strings.Join(names, ", ") // Join the names into a single string
+}
 
 // Initializes the node and retrieves the neighbor list from the bootstrap server
 func (node *Node) initialize(bootstrapAddress string) {
@@ -133,6 +156,85 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
+// Initialize probing for a node, called by CS type node
+func (n *Node) initializeProbing(protocolConn *net.UDPConn, maxProbes int) {
+	probing := Probing{
+		Nodes: []NodeMetrics{
+			{
+				Name:    n.Name,
+				Metrics: Metric{Hops: 0}, // Start with 0 hops
+			},
+		},
+	}
+
+	// Send the probing to all neighbors maxProbes times
+	for i := 0; i < maxProbes; i++ {
+		for neighbor := range n.Neighbors {
+
+			err := n.sendProbing(protocolConn, neighbor, probing)
+			if err != nil {
+				log.Printf("Error sending probing to %s: %v", neighbor, err)
+			}
+		}
+	}
+}
+
+func (n *Node) sendProbing(protocolConn *net.UDPConn, neighborName string, probing Probing) error {
+	// Marshal the probing structure into JSON or another suitable format
+
+	probingData, err := json.Marshal(probing)
+	if err != nil {
+		return fmt.Errorf("failed to marshal probing data: %v", err)
+	}
+
+	// Send the probing to the neighbor's address (you will need the neighbor's IP from the Neighbors map)
+	neighborAddr, ok := n.Neighbors[neighborName]
+
+	if !ok {
+		return fmt.Errorf("neighbor %s not found in Neighbors map", neighborName)
+	}
+
+	// Append the port to the neighbor's IP
+
+	neighborWithPort := fmt.Sprintf("%s:%d", neighborAddr, 8000)
+
+	fmt.Printf("%s\n", neighborWithPort)
+
+	// Create the UDP address for the neighbor
+	addr, err := net.ResolveUDPAddr("udp", neighborWithPort)
+	if err != nil {
+		return fmt.Errorf("failed to resolve UDP address: %v", err)
+	}
+
+	finalMessage := append([]byte("PROBING "), probingData...)
+	// Send the probing data to the neighbor
+	log.Printf("Sending probing to neighbor: %s from node: %s", neighborName, n.Name)
+	_, err = protocolConn.WriteTo(finalMessage, addr)
+	if err != nil {
+		return fmt.Errorf("failed to send probing: %v", err)
+	}
+
+	return nil
+}
+
+func (node *Node) filterNeighbors(probing *Probing) []string {
+	// Create a map of existing nodes in the probing (for quick lookup)
+	alreadyInProbing := make(map[string]struct{})
+	for _, probingNode := range probing.Nodes {
+		alreadyInProbing[probingNode.Name] = struct{}{} // Empty struct to represent presence
+	}
+
+	// Filter neighbors: only those that are not in the probing path
+	var filteredNeighbors []string
+	for neighborName := range node.Neighbors { // Iterate over the keys (neighbor names)
+		if _, exists := alreadyInProbing[neighborName]; !exists {
+			filteredNeighbors = append(filteredNeighbors, neighborName)
+		}
+	}
+
+	return filteredNeighbors
+}
+
 func addClientAddress(contentName string, clientAddr net.Addr, clients map[string][]net.Addr, mu *sync.Mutex) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -167,7 +269,9 @@ func addClientAddressNode(contentName string, popOfRoute string, clientAddr net.
 	log.Printf("New client connected from %s for content \"%s\"", popOfRoute, contentName)
 }
 
-func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string, popOfRoute string) {
+func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string, popOfRoute string) {
+	best := false
+
 	// Initialize the map if it's nil
 	if streamConnectionsIn == nil {
 		streamConnectionsIn = make(map[string]*net.UDPConn)
@@ -292,6 +396,40 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 			} else {
 				log.Printf("Reusing existing connection for content \"%s\"", contentName)
 			}
+		case "PROBING":
+
+			var probing Probing
+			err := json.Unmarshal([]byte(parts[1]), &probing)
+			if err != nil {
+				log.Printf("Error unmarshalling probing message: %v", err)
+				continue
+			}
+			//adds itself
+			lastNode := probing.Nodes[0]
+			newHop := lastNode.Metrics.Hops + 1
+
+			// Create the new node (O3)
+			newNode := NodeMetrics{
+				Name:    node.Name,
+				Metrics: Metric{Hops: newHop},
+			}
+			probing.Nodes = append([]NodeMetrics{newNode}, probing.Nodes...)
+
+			fmt.Printf("Ultima paragem do Probing\n")
+			//escolhe o primeiro path como o melhor
+			if !best {
+				bestPath := getAllNames(probing)
+				fmt.Printf("Best Path:%s\n", bestPath)
+				best = true
+			}
+
+		case "PING":
+
+			response := []byte("pong")
+			_, err = protocolConn.WriteTo(response, clientAddr)
+			if err != nil {
+				fmt.Printf("Error sending response to %s: %v\n", clientAddr, err)
+			}
 
 		default:
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
@@ -299,7 +437,7 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 	}
 }
 
-func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
+func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
 	// Initialize the map if it's nil
 	if streamConnectionsIn == nil {
 		streamConnectionsIn = make(map[string]*net.UDPConn)
@@ -427,6 +565,32 @@ func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]st
 				log.Printf("Reusing existing connection for content \"%s\"", popOfRoute)
 			}
 
+		case "PROBING":
+			var probing Probing
+			err := json.Unmarshal([]byte(parts[1]), &probing)
+			if err != nil {
+				log.Printf("Error unmarshalling probing message: %v", err)
+				continue
+			}
+			//adds itself
+			lastNode := probing.Nodes[0]
+			newHop := lastNode.Metrics.Hops + 1
+
+			// Create the new node (O3)
+			newNode := NodeMetrics{
+				Name:    node.Name,
+				Metrics: Metric{Hops: newHop},
+			}
+			probing.Nodes = append([]NodeMetrics{newNode}, probing.Nodes...)
+
+			fmt.Printf("Chegou pacote de Probing\n")
+			filteredNeighbors := node.filterNeighbors(&probing)
+
+			for _, neighbor := range filteredNeighbors {
+				// Assuming you want to increment hop value by 1 for each new neighbor
+				node.sendProbing(protocolConn, neighbor, probing)
+			}
+
 		default:
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
 		}
@@ -450,7 +614,10 @@ func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string
 	return nil
 }
 
-func handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
+func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
+
+	node.initializeProbing(conn, 1)
+
 	clients := make(map[string][]net.Addr)
 
 	buf := make([]byte, 1024)
@@ -793,7 +960,7 @@ func main() {
 			return
 		}
 
-		go handleConnectionsPOP(protocolConn, routingTable, node.Neighbors, node.Name)
+		go node.handleConnectionsPOP(protocolConn, routingTable, node.Neighbors, node.Name)
 
 		// Block indefinitely to keep the node running
 		select {}
@@ -813,7 +980,7 @@ func main() {
 		defer protocolConn.Close()
 
 		// esperar por conexao
-		go handleConnectionsNODE(protocolConn, routingTable, node.Neighbors)
+		go node.handleConnectionsNODE(protocolConn, routingTable, node.Neighbors)
 
 		select {}
 
@@ -835,7 +1002,7 @@ func main() {
 		}
 		defer conn.Close()
 
-		go handleConnectionsCS(conn, streams, ffmpegCommands)
+		go node.handleConnectionsCS(conn, streams, ffmpegCommands)
 
 		select {}
 
