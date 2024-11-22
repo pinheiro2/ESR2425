@@ -606,18 +606,6 @@ func main() {
 	switch node.Type {
 	case "POP":
 
-		// connections := make(map[string]*net.UDPConn)
-
-		// for neighborName, neighborIP := range node.Neighbors {
-		// 	infoConn, err := setupUDPConnection(neighborIP, 8000)
-		// 	if err != nil {
-		// 		log.Fatalf("Error setting up UDP connection to %s (%s): %v", neighborName, neighborIP, err)
-		// 	}
-		// 	log.Printf("POP connected to %s at %s", neighborName, infoConn.RemoteAddr())
-		// 	connections[neighborName] = infoConn
-		// 	defer infoConn.Close() // Remember to close these later
-		// }
-
 		// abrir porta udp para escuta de pedidos
 		protocolConn, err := setupUDPListener(*ip, node.Port)
 		if err != nil {
@@ -625,11 +613,9 @@ func main() {
 		}
 		defer protocolConn.Close()
 
-		/**
-		 * ATUALIZAR TABELA E MANDAR UPDATE
-		 */
+		// ATUALIZAR TABELA E MANDAR UPDATE
 
-		jsonUpdate := []byte(`["O8","O5","O4","O1","S1"]`)
+		jsonUpdate := []byte(`["O1", "S1"]`)
 		// Call the function
 		first, restJSON, err := ExtractFirstElement(jsonUpdate)
 
