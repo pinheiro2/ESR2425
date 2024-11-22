@@ -424,7 +424,7 @@ func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]st
 				// Forward the stream to the client
 				go forwardToClientsNode(protocolConn, streamConnIn, popOfRoute, clientsNode[contentName])
 			} else {
-				log.Printf("Reusing existing connection for content \"%s\"", popOfRoute)
+				log.Printf("Reusing existing connection for POP: \"%s\"", popOfRoute)
 			}
 
 		default:
@@ -659,7 +659,7 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, popOfRout
 					log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
 				} else {
 					// Uncomment the next line for debugging purposes
-					// log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
+					log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
 				}
 			}
 		}
