@@ -154,6 +154,22 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
+		case "UPDATE":
+			if len(parts) < 2 {
+				log.Printf("UPDATE command from client %s is missing data", clientAddr)
+				continue
+			}
+
+			updateData := strings.Join(parts[1:], " ") // Extract the JSON data
+			var newRoutes map[string]string
+			err := json.Unmarshal([]byte(updateData), &newRoutes)
+			if err != nil {
+				log.Printf("Failed to parse UPDATE data from client %s: %v", clientAddr, err)
+				continue
+			}
+
+			log.Printf("Received UPDATE from %s: %v", clientAddr, newRoutes)
+
 		case "REQUEST":
 			if len(parts) < 2 {
 				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
