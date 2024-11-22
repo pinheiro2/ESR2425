@@ -396,7 +396,7 @@ func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]st
 			addClientAddressNode(contentName, popOfRoute, clientAddr, clientsNode, &clientsMu)
 
 			streamConnMu.Lock()
-			streamConnIn, exists := streamConnectionsIn[popOfRoute]
+			streamConnIn, exists := streamConnectionsIn[contentName]
 			streamConnMu.Unlock()
 
 			if !exists {
@@ -409,7 +409,7 @@ func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]st
 
 				// Add the new connection to the map
 				streamConnMu.Lock()
-				streamConnectionsIn[popOfRoute] = streamConnIn
+				streamConnectionsIn[contentName] = streamConnIn
 				streamConnMu.Unlock()
 
 				// Send the content request to the appropriate stream connection
@@ -422,7 +422,7 @@ func handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]st
 				log.Printf("New connection established for content \"%s\"", popOfRoute)
 
 				// Forward the stream to the client
-				go forwardToClients(protocolConn, streamConnIn, popOfRoute, clientsNode[contentName])
+				go forwardToClientsNode(protocolConn, streamConnIn, popOfRoute, clientsNode[contentName])
 			} else {
 				log.Printf("Reusing existing connection for content \"%s\"", popOfRoute)
 			}
@@ -640,7 +640,7 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 }
 
 // Forwards data from content server to connected clients (used by POP)
-func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn, contentName string, clients map[string][]net.Addr) {
+func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, popOfRoute string, clients map[string][]net.Addr) {
 	buf := make([]byte, 150000)
 	for {
 		n, _, err := contentConn.ReadFromUDP(buf)
@@ -652,7 +652,35 @@ func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn, contentName s
 		//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
 
 		clientsMu.Lock()
-		for _, clientAddr := range clients[contentName] {
+		for _, clientAddrs := range clients {
+			for _, clientAddr := range clientAddrs {
+				_, err := conn.WriteTo(buf[:n], clientAddr)
+				if err != nil {
+					log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
+				} else {
+					// Uncomment the next line for debugging purposes
+					// log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
+				}
+			}
+		}
+		clientsMu.Unlock()
+	}
+}
+
+// Forwards data from content server to connected clients (used by POP)
+func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn, popOfRoute string, clients map[string][]net.Addr) {
+	buf := make([]byte, 150000)
+	for {
+		n, _, err := contentConn.ReadFromUDP(buf)
+		if err != nil {
+			log.Printf("Error reading from Content Server: %v", err)
+			return
+		}
+
+		//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
+
+		clientsMu.Lock()
+		for _, clientAddr := range clients[popOfRoute] {
 			_, err := conn.WriteTo(buf[:n], clientAddr)
 			if err != nil {
 				log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
@@ -787,8 +815,10 @@ func main() {
 		}
 
 		updateRoutingTable(routingTable, "stream1", node.Neighbors[first])
+		updateRoutingTable(routingTable, "stream2", node.Neighbors[first])
 
 		err = sendUpdatePacket(protocolConn, node.Name, restJSON, nextInRouteIp)
+
 		if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
 			return
 		}
