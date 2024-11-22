@@ -123,7 +123,7 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string]string) {
+func handleClientConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
 	// Initialize the map if it's nil
 	if streamConnectionsIn == nil {
 		streamConnectionsIn = make(map[string]*net.UDPConn)
@@ -160,15 +160,26 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 				continue
 			}
 
-			updateData := strings.Join(parts[1:], " ") // Extract the JSON data
-			var newRoutes map[string]string
-			err := json.Unmarshal([]byte(updateData), &newRoutes)
+			updateDataString := strings.Join(parts[1:], " ") // Extract the JSON data
+			updateData := []byte(updateDataString)
+
+			var newRoutes []string
+			err := json.Unmarshal(updateData, &newRoutes)
 			if err != nil {
 				log.Printf("Failed to parse UPDATE data from client %s: %v", clientAddr, err)
 				continue
 			}
 
 			log.Printf("Received UPDATE from %s: %v", clientAddr, newRoutes)
+
+			// Call the function
+			first, restJSON, err := ExtractFirstElement(updateData)
+
+			nextInRouteIp, err := getNextInRouteAddr(neighbors[first])
+
+			updateRoutingTable(routingTable, neighbors[first])
+
+			sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
 
 		case "REQUEST":
 			if len(parts) < 2 {
@@ -205,9 +216,9 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, streamFrom map[string
 			if !exists {
 				// Connection doesn't exist, create a new one
 				var err error
-				streamConnIn, err = setupUDPConnection(streamFrom[contentName], 8000)
+				streamConnIn, err = setupUDPConnection(routingTable[contentName], 8000)
 				if err != nil {
-					log.Fatalf("Error setting up UDP connection to %s for content \"%s\": %v", streamFrom[contentName], contentName, err)
+					log.Fatalf("Error setting up UDP connection to %s for content \"%s\": %v", routingTable[contentName], contentName, err)
 				}
 
 				// Add the new connection to the map
@@ -279,6 +290,23 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
+		case "UPDATE":
+			if len(parts) < 2 {
+				log.Printf("UPDATE command from client %s is missing data", clientAddr)
+				continue
+			}
+
+			updateDataString := strings.Join(parts[1:], " ") // Extract the JSON data
+			updateData := []byte(updateDataString)
+
+			var newRoutes []string
+			err := json.Unmarshal(updateData, &newRoutes)
+			if err != nil {
+				log.Printf("Failed to parse UPDATE data from client %s: %v", clientAddr, err)
+				continue
+			}
+
+			log.Printf("Received UPDATE from %s: %v", clientAddr, newRoutes)
 		case "REQUEST":
 			if len(parts) < 2 {
 				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
@@ -616,7 +644,7 @@ func main() {
 		sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
 
 		// esperar por conexao
-		go handleClientConnectionsPOP(protocolConn, routingTable)
+		go handleClientConnectionsPOP(protocolConn, routingTable, node.Neighbors)
 
 		select {}
 
@@ -624,14 +652,8 @@ func main() {
 
 		fmt.Printf("Node %s initialized as a regular node with neighbors: %v\n", node.Name, node.Neighbors)
 
-		// streamFrom [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
-		streamFrom := make(map[string]string)
-
-		// Add entries to the map
-		// TODO: arvore de distribuição aqui
-		streamFrom["stream1"] = node.Neighbors["S1"]
-		streamFrom["stream2"] = node.Neighbors["S1"]
-		streamFrom["stream3"] = node.Neighbors["S1"]
+		// routingTable [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
+		routingTable := make(map[string]string)
 
 		// abrir porta udp para escuta de pedidos
 		protocolConn, err := setupUDPListener(*ip, node.Port)
@@ -641,7 +663,7 @@ func main() {
 		defer protocolConn.Close()
 
 		// esperar por conexao
-		go handleClientConnectionsPOP(protocolConn, streamFrom)
+		go handleClientConnectionsPOP(protocolConn, routingTable, node.Neighbors)
 
 		select {}
 
