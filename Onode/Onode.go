@@ -492,14 +492,45 @@ func ExtractFirstElement(jsonData []byte) (string, []byte, error) {
 
 	return first, restJSON, nil
 }
-func updateRoutingTable(streamFrom map[string]string, ipNextHop string) {
-	streamFrom["stream1"] = ipNextHop
-	streamFrom["stream2"] = ipNextHop
-	streamFrom["stream3"] = ipNextHop
+func updateRoutingTable(routingTable map[string]string, ipNextHop string) {
+	routingTable["stream1"] = ipNextHop
+	routingTable["stream2"] = ipNextHop
+	routingTable["stream3"] = ipNextHop
 }
 
-func sendUpdatePacket(jsonData []byte, nextInRoute string) {
+func getNextInRouteAddr(nextInRouteIp string) (*net.UDPAddr, error) {
+	// Parse the IP address
+	parsedIP := net.ParseIP(nextInRouteIp)
+	if parsedIP == nil {
+		return nil, fmt.Errorf("invalid IP address: %s", nextInRouteIp)
+	}
 
+	// Create a UDPAddr
+	return &net.UDPAddr{
+		IP:   parsedIP,
+		Port: 8000,
+	}, nil
+}
+
+func sendUpdatePacket(conn *net.UDPConn, jsonData []byte, nextInRoute net.Addr) error {
+
+	if conn == nil {
+		return fmt.Errorf("connection is nil; cannot send update to %s", nextInRoute)
+	}
+	// Prefix the content name with "Request:"
+	message := "UPDATE "
+	msgBytes := []byte(message)
+
+	finalMessage := append(msgBytes, jsonData...)
+
+	// Send the request message
+	_, err := conn.WriteTo(finalMessage, nextInRoute)
+
+	if err != nil {
+		return fmt.Errorf("failed to send update: %w", err)
+	}
+	log.Printf("Sent update to %s\n", nextInRoute)
+	return nil
 }
 
 func main() {
@@ -558,17 +589,18 @@ func main() {
 		// Call the function
 		first, restJSON, err := ExtractFirstElement(jsonUpdate)
 
-		// streamFrom [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
-		streamFrom := make(map[string]string)
-		nextInRouteIp := node.Neighbors[first]
+		// routingTable [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
+		routingTable := make(map[string]string)
+		nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
+
 		// Add entries to the map
 		// TODO: arvore de distribuição aqui
-		updateRoutingTable(streamFrom, nextInRouteIp)
+		updateRoutingTable(routingTable, node.Neighbors[first])
 
-		sendUpdatePacket(restJSON, nextInRouteIp)
+		sendUpdatePacket(protocolConn, restJSON, nextInRouteIp)
 
 		// esperar por conexao
-		go handleClientConnectionsPOP(protocolConn, streamFrom)
+		go handleClientConnectionsPOP(protocolConn, routingTable)
 
 		select {}
 
