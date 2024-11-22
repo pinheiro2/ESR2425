@@ -123,6 +123,23 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
+func addClientAddress(contentName string, clientAddr net.Addr, clients map[string][]net.Addr, mu *sync.Mutex) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Check if the client address already exists for the given content
+	for _, c := range clients[contentName] {
+		if c.String() == clientAddr.String() {
+			log.Printf("Existing client %s reconnected for content \"%s\"", clientAddr, contentName)
+			return
+		}
+	}
+
+	// Add the client address to the list
+	clients[contentName] = append(clients[contentName], clientAddr)
+	log.Printf("New client connected from %s for content \"%s\"", clientAddr, contentName)
+}
+
 func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
 	// Initialize the map if it's nil
 	if streamConnectionsIn == nil {
@@ -190,25 +207,26 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
 			// Add the client address to the list if it's new
-			clientsMu.Lock()
-			found := false
-			for _, c := range clients[contentName] {
-				if c.String() == clientAddr.String() {
-					found = true
-					break
-				}
-			}
-			if !found {
+			// clientsMu.Lock()
+			// found := false
+			// for _, c := range clients[contentName] {
+			// 	if c.String() == clientAddr.String() {
+			// 		found = true
+			// 		break
+			// 	}
+			// }
+			// if !found {
 
-				clientsL := append(clients[contentName], clientAddr)
-				clients[contentName] = clientsL
-				log.Printf("New client connected from %s", clientAddr)
-			} else {
-				log.Printf("Existing client %s reconnected", clientAddr)
-			}
-			clientsMu.Unlock()
+			// 	clientsL := append(clients[contentName], clientAddr)
+			// 	clients[contentName] = clientsL
+			// 	log.Printf("New client connected from %s", clientAddr)
+			// } else {
+			// 	log.Printf("Existing client %s reconnected", clientAddr)
+			// }
+			// clientsMu.Unlock()
 
-			// Protect access to streamConnectionsIn and check if the connection already exists
+			addClientAddress(contentName, clientAddr, clients, &clientsMu)
+
 			streamConnMu.Lock()
 			streamConnIn, exists := streamConnectionsIn[contentName]
 			streamConnMu.Unlock()
