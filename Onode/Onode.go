@@ -183,7 +183,7 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, routingTable map[stri
 
 		case "REQUEST":
 			if len(parts) < 2 {
-				log.Printf("REQUEST command from client %s is missing a video name", clientAddr)
+				log.Printf("REQUEST command from client %s is missing a content name", clientAddr)
 				continue
 			}
 			contentName := parts[1]
@@ -242,8 +242,7 @@ func handleClientConnectionsPOP(protocolConn *net.UDPConn, routingTable map[stri
 			}
 
 		default:
-			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
-			// Optionally handle unknown messages, send error responses, etc.
+			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
 		}
 	}
 }
@@ -289,6 +288,7 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 
 		// Parse the command and handle each case
 		command := parts[0]
+
 		switch command {
 		case "UPDATE":
 			if len(parts) < 2 {
@@ -348,6 +348,7 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 				go sendRTPPackets(conn, reader, contentName, clients)
 
 				// Send RTP packets and handle errors
+				// TODO: lidar com fim de uma stream e remeco da mesma
 				// go func() {
 				// 	err := sendRTPPackets(conn, streams[contentName], contentName)
 				// 	if err != nil {
@@ -373,7 +374,7 @@ func handleClientConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Read
 			}
 
 		default:
-			log.Printf("Unknown command from client %s: %s", clientAddr, clientMessage)
+			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
 		}
 	}
 }
@@ -431,9 +432,6 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 			return fmt.Errorf("failed to marshal RTP packet: %w", err)
 		}
 
-		// Send the packet to all connected clients
-		// log.Printf("Trying to send packet to %v", clients[contentName])
-
 		clientsMu.Lock() // Lock the client list for safe access
 		for _, client := range clients[contentName] {
 
@@ -466,7 +464,7 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
-	fmt.Println("Sent connection request to server")
+	log.Println("Setup UDP connection Successful")
 	return conn, nil
 }
 
@@ -509,10 +507,8 @@ func LoadJSONToMap(filename string, data map[string]string) error {
 	return nil
 }
 
-// Function to extract the first element and return the rest
 // Function to extract the first element and return the rest as JSON
 func ExtractFirstElement(jsonData []byte) (string, []byte, error) {
-	// Unmarshal the JSON into a slice of strings
 	var data []string
 	err := json.Unmarshal(jsonData, &data)
 	if err != nil {
@@ -524,11 +520,9 @@ func ExtractFirstElement(jsonData []byte) (string, []byte, error) {
 		return "", nil, fmt.Errorf("empty JSON array")
 	}
 
-	// Extract the first element and the rest of the slice
 	first := data[0]
 	rest := data[1:]
 
-	// Marshal the remaining elements back to JSON
 	restJSON, err := json.Marshal(rest)
 	if err != nil {
 		return "", nil, err
