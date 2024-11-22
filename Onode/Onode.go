@@ -629,7 +629,7 @@ func main() {
 		 * ATUALIZAR TABELA E MANDAR UPDATE
 		 */
 
-		jsonUpdate := []byte(`["O1", "S1"]`)
+		jsonUpdate := []byte(`["O8","O5","O4","O1","S1"]`)
 		// Call the function
 		first, restJSON, err := ExtractFirstElement(jsonUpdate)
 
