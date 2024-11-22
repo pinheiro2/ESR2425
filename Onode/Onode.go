@@ -243,7 +243,7 @@ func handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]str
 				continue
 			}
 
-			log.Printf("Successfully processed UPDATE for \"%s\" and forwarded to %s", first, nextInRouteIp)
+			log.Printf("Successfully processed UPDATE for \"%s\" and forwarded to %s", popOfRoute, nextInRouteIp)
 
 		case "REQUEST":
 			if len(parts) < 2 {
