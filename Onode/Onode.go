@@ -27,7 +27,9 @@ type Node struct {
 }
 
 type Metric struct {
-	Hops int `json:"hops"` // Number of hops or any other metric-related number
+	Timestamp string `json:"timestamp"`
+	Hops      int    `json:"hops"` // Number of hops or any other metric-related number
+
 }
 
 // NodeMetrics structure to hold the node name and associated metrics
@@ -38,7 +40,23 @@ type NodeMetrics struct {
 
 // Probing structure to hold the slice of NodeMetrics
 type Probing struct {
-	Nodes []NodeMetrics `json:"nodes"` // Slice of NodeMetrics
+	Id         int           `json:"Id"`
+	TotalCount int           `json:"TotalCount"`
+	Nodes      []NodeMetrics `json:"nodes"` // Slice of NodeMetrics
+}
+
+// Define the ProbingState struct locally within the function
+type ProbingState struct {
+	ProbingMap map[string][]Probing
+	Timer      *time.Timer
+}
+
+// Parametheres to calculate best path
+type PathMetrics struct {
+	AverageDelay  float64 `json:"averageDelay"`
+	AverageJitter float64 `json:"averageJitter"`
+	SuccessRate   float64 `json:"successRate"`
+	Score         float64 `json:"score"`
 }
 
 var (
@@ -49,12 +67,13 @@ var (
 	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
 )
 
-func getAllNames(probing Probing) string {
+// Updated getAllNames Function
+func getAllNames(probing Probing) (string, error) {
 	var names []string
 	for _, node := range probing.Nodes {
 		names = append(names, node.Name) // Collect all node names
 	}
-	return strings.Join(names, ", ") // Join the names into a single string
+	return strings.Join(names, ","), nil // Return the names joined by commas
 }
 
 // Initializes the node and retrieves the neighbor list from the bootstrap server
@@ -157,18 +176,23 @@ func setupUDPListener(ip string, port int) (*net.UDPConn, error) {
 }
 
 // Initialize probing for a node, called by CS type node
-func (n *Node) initializeProbing(protocolConn *net.UDPConn, maxProbes int) {
+func (n *Node) initializeProbing(protocolConn *net.UDPConn, totalcount int, id int) {
 	probing := Probing{
+		Id:         id,
+		TotalCount: totalcount,
 		Nodes: []NodeMetrics{
 			{
-				Name:    n.Name,
-				Metrics: Metric{Hops: 0}, // Start with 0 hops
+				Name: n.Name,
+				Metrics: Metric{
+					Timestamp: time.Now().Format(time.RFC3339Nano), // Get the current timestamp in ISO 8601 format
+					Hops:      0,                                   // Start with 0 hops
+				},
 			},
 		},
 	}
 
-	// Send the probing to all neighbors maxProbes times
-	for i := 0; i < maxProbes; i++ {
+	// Send the probing to all neighbors totalcount times
+	for i := 0; i < totalcount; i++ {
 		for neighbor := range n.Neighbors {
 
 			err := n.sendProbing(protocolConn, neighbor, probing)
@@ -235,6 +259,142 @@ func (node *Node) filterNeighbors(probing *Probing) []string {
 	return filteredNeighbors
 }
 
+// calculateScores calculates scores for each path and updates the PathMetrics map
+func calculateScores(metrics map[string]PathMetrics, maxAvgTime, maxJitter float64) map[string]PathMetrics {
+	// Define weights for jitter, average delay, and success rate
+	const (
+		jitterWeight  = 0.4
+		avgTimeWeight = 0.3
+		successWeight = 0.3
+	)
+
+	for key, metric := range metrics {
+		// Normalize Jitter
+		normalizedJitter := metric.AverageJitter / maxJitter
+		if normalizedJitter > 1 {
+			normalizedJitter = 1
+		}
+
+		// Normalize Average Delay
+		normalizedAvgTime := metric.AverageDelay / maxAvgTime
+		if normalizedAvgTime > 1 {
+			normalizedAvgTime = 1
+		}
+
+		// Compute the score
+		metric.Score = (jitterWeight * (1 - normalizedJitter)) +
+			(avgTimeWeight * (1 - normalizedAvgTime)) +
+			(successWeight * metric.SuccessRate)
+
+		metrics[key] = metric
+
+		fmt.Printf("Path: %s Score: %f\n", key, metric.Score)
+	}
+
+	return metrics
+}
+
+// Example to find the best path
+func findBestPath(metrics map[string]PathMetrics) (string, PathMetrics) {
+	var bestKey string
+	var highestScore float64
+	var bestMetrics PathMetrics
+
+	for key, metric := range metrics {
+		if metric.Score > highestScore {
+			highestScore = metric.Score
+			bestKey = key
+			bestMetrics = metric
+		}
+	}
+
+	return bestKey, bestMetrics
+}
+
+func calculateBestPath(probingState *ProbingState) (string, PathMetrics) {
+	result := make(map[string]PathMetrics)
+
+	var maxDelay float64 = 0  // Track the maximum delay
+	var maxJitter float64 = 0 // Track the maximum jitter
+
+	// Iterate over each key in the ProbingMap
+	for key, probings := range probingState.ProbingMap {
+		var delays []float64                        // Store delays for each probing
+		var jitters []float64                       // Store jitter differences between consecutive delays
+		var totalSuccess int                        // Total successful packets
+		var totalCount int = probings[0].TotalCount // Total packets sent
+
+		//get delay
+		for _, probing := range probings {
+			// Check if there are enough nodes to calculate delay
+			if len(probing.Nodes) >= 2 {
+				// Most recent
+				firstTimestamp, err1 := time.Parse(time.RFC3339Nano, probing.Nodes[0].Metrics.Timestamp)
+				// Oldest
+				lastTimestamp, err2 := time.Parse(time.RFC3339Nano, probing.Nodes[len(probing.Nodes)-1].Metrics.Timestamp)
+
+				if err1 == nil && err2 == nil {
+					// Calculate delay
+					delay := firstTimestamp.Sub(lastTimestamp).Nanoseconds() // Convert to milliseconds
+					delays = append(delays, float64(delay))
+
+					totalSuccess++
+
+					// Track the maximum delay
+					if float64(delay) > maxDelay {
+						maxDelay = float64(delay)
+					}
+				}
+			}
+		}
+
+		// Calculate jitter between consecutive delays
+		for i := 1; i < len(delays); i++ {
+			jitter := delays[i] - delays[i-1]
+			if jitter < 0 {
+				jitter = -jitter
+			}
+			jitters = append(jitters, jitter)
+
+			// Track maximum jitter
+			if jitter > maxJitter {
+				maxJitter = jitter
+			}
+		}
+
+		// Calculate average delay
+		var totalDelay float64
+		for _, delay := range delays {
+			totalDelay += delay
+		}
+		averageDelay := totalDelay / float64(len(delays))
+
+		// Calculate average jitter
+		var totalJitter float64
+		for _, jitter := range jitters {
+			totalJitter += jitter
+		}
+		averageJitter := totalJitter / float64(len(jitters))
+
+		fmt.Printf("DELAY:%f\n", averageDelay)
+		fmt.Printf("JITTER:%f\n", totalJitter)
+		fmt.Printf("SUCCESSCount: %d\n", totalSuccess)
+
+		// Store results in the map for this path (key)
+		result[key] = PathMetrics{
+			AverageDelay:  averageDelay,
+			AverageJitter: averageJitter,
+			SuccessRate:   float64(totalSuccess) / float64(totalCount),
+		}
+	}
+
+	scores := calculateScores(result, maxDelay, maxJitter)
+
+	key, metric := findBestPath(scores)
+
+	return key, metric
+}
+
 func addClientAddress(contentName string, clientAddr net.Addr, clients map[string][]net.Addr, mu *sync.Mutex) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -270,7 +430,14 @@ func addClientAddressNode(contentName string, popOfRoute string, clientAddr net.
 }
 
 func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string, popOfRoute string) {
-	best := false
+	// Initialize probingState and expectedID
+	probingState := &ProbingState{
+		ProbingMap: make(map[string][]Probing),
+	}
+	expectedID := 0
+
+	var bestPath string
+	var bestMetric PathMetrics
 
 	// Initialize the map if it's nil
 	if streamConnectionsIn == nil {
@@ -404,24 +571,54 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				log.Printf("Error unmarshalling probing message: %v", err)
 				continue
 			}
+
+			// Ignore messages with unexpected IDs
+			if probing.Id != expectedID {
+				log.Printf("Ignoring probing with unexpected ID: %d (expected: %d)", probing.Id, expectedID)
+				continue
+			}
+
+			// 10 second timeout
+			if probingState.Timer == nil {
+				probingState.Timer = time.AfterFunc(10*time.Second, func() {
+					//ensures that it does not have problems in the first run
+					if len(probingState.ProbingMap) > 0 {
+						bestPath, bestMetric = calculateBestPath(probingState) // Calculate the best path
+						//SEND UPDATE HERE
+						fmt.Printf("Best Path: %s, Metrics:%v\n", bestPath, bestMetric)
+						probingState.ProbingMap = make(map[string][]Probing) // Reset map
+						expectedID++                                         // Move to the next probing ID
+					}
+					probingState.Timer = nil
+				})
+			}
+
 			//adds itself
 			lastNode := probing.Nodes[0]
 			newHop := lastNode.Metrics.Hops + 1
 
-			// Create the new node (O3)
+			// Add the new entry in Probing
 			newNode := NodeMetrics{
-				Name:    node.Name,
-				Metrics: Metric{Hops: newHop},
+				Name: node.Name,
+				Metrics: Metric{
+					Timestamp: time.Now().Format(time.RFC3339Nano), // Add the current timestamp
+					Hops:      newHop,
+				},
 			}
 			probing.Nodes = append([]NodeMetrics{newNode}, probing.Nodes...)
 
-			fmt.Printf("Ultima paragem do Probing\n")
-			//escolhe o primeiro path como o melhor
-			if !best {
-				bestPath := getAllNames(probing)
-				fmt.Printf("Best Path:%s\n", bestPath)
-				best = true
+			//Create the key for the map
+			pathKey, err := getAllNames(probing)
+			if err != nil {
+				log.Printf("Error generating path key: %v", err)
+				continue
 			}
+
+			//Add the Probing to the map
+			probingState.ProbingMap[pathKey] = append(probingState.ProbingMap[pathKey], probing)
+			log.Printf("Probing added for path: %s", pathKey)
+
+			fmt.Printf("Ultima paragem do Probing\n")
 
 		case "PING":
 
@@ -578,8 +775,11 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 			// Create the new node (O3)
 			newNode := NodeMetrics{
-				Name:    node.Name,
-				Metrics: Metric{Hops: newHop},
+				Name: node.Name,
+				Metrics: Metric{
+					Timestamp: time.Now().Format(time.RFC3339Nano), // Add the current timestamp
+					Hops:      newHop,
+				},
 			}
 			probing.Nodes = append([]NodeMetrics{newNode}, probing.Nodes...)
 
@@ -616,7 +816,9 @@ func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string
 
 func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
 
-	node.initializeProbing(conn, 1)
+	//ciclo the timeout
+	// initializeProbing recebe o numero de probings que tem de mandar e o id do probing
+	node.initializeProbing(conn, 3, 0)
 
 	clients := make(map[string][]net.Addr)
 
