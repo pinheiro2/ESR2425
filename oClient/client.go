@@ -18,6 +18,7 @@ import (
 
 type Node struct {
 	Address       string `json:"address"`
+	Port          int
 	ResponseTimes []time.Duration
 	AverageTime   time.Duration
 	Jitter        time.Duration
@@ -44,6 +45,7 @@ func loadNodesFromFile(filename string) ([]*Node, error) {
 	for _, address := range nodeMap {
 		node := &Node{
 			Address: address,
+			Port:    8000,
 		}
 		nodes = append(nodes, node)
 	}
@@ -75,15 +77,17 @@ func calculateJitter(node *Node) time.Duration {
 func measureNodeResponse(node *Node, wg *sync.WaitGroup) {
 	defer wg.Done()
 
+	addr := fmt.Sprintf("%s:%d", node.Address, node.Port)
+
 	// Create a UDP connection
-	conn, err := net.Dial("udp", node.Address)
+	conn, err := net.Dial("udp", addr)
 	if err != nil {
 		fmt.Printf("Failed to connect to %s: %v\n", node.Address, err)
 		return
 	}
 	defer conn.Close()
 
-	message := []byte("ping")
+	message := []byte("PING")
 	start := time.Now()
 
 	// Send a UDP message
@@ -171,6 +175,10 @@ func (n *Node) calculateScore(jitterWeight, avgTimeWeight, successWeight float64
 	n.Score = (jitterWeight * (1 - normalizedJitter)) +
 		(avgTimeWeight * (1 - normalizedAvgTime)) +
 		(successWeight * successRate)
+
+	if n.AverageTime == 0 {
+		n.Score = 0
+	}
 
 	fmt.Printf("Score: %f\n", n.Score)
 }
@@ -303,7 +311,7 @@ func sendContentRequest(conn *net.UDPConn, contentName string) error {
 	return nil
 }
 func main() {
-	nodes, err := loadNodesFromFile("test.json")
+	nodes, err := loadNodesFromFile("pops.json")
 	if err != nil {
 		fmt.Printf("Error loading nodes: %v\n", err)
 		os.Exit(1)
@@ -318,12 +326,12 @@ func main() {
 
 	// Define the port flag and parse the command-line arguments
 	stream := flag.String("stream", "stream1", "stream to connect to")
-	popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
-	port := flag.Int("port", 8000, "UDP port to connect to on the server")
+	//popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
+	//port := flag.Int("port", 8000, "UDP port to connect to on the server")
 	flag.Parse()
 
 	// Set up the UDP connection to the specified port
-	conn, err := setupUDPConnection(*popIp, *port)
+	conn, err := setupUDPConnection(bestNode.Address, bestNode.Port)
 	if err != nil {
 		log.Fatalf("Error setting up UDP connection: %v", err)
 	}
