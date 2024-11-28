@@ -322,7 +322,7 @@ func main() {
 	testNodesMultipleTimes(nodes, testCount)
 
 	bestNode := findBestNode(nodes)
-	fmt.Printf("Eu sou o melhor node: %s", bestNode.Address)
+	fmt.Printf("Eu sou o melhor node: %s\n", bestNode.Address)
 
 	// Define the port flag and parse the command-line arguments
 	stream := flag.String("stream", "stream1", "stream to connect to")

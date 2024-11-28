@@ -12,7 +12,18 @@ all: client
 
 # Run the Client
 client:
-	$(GO) run $(CLIENT) -pop-ip $(POP_IP) -stream $(STREAM)
+	$(GO) run $(CLIENT) -stream $(STREAM)
+
+# Explicit targets for different clients
+client1:
+	$(MAKE) client STREAM=stream1
+
+client2:
+	$(MAKE) client STREAM=stream1
+
+client3:
+	$(MAKE) client STREAM=stream3
+
 
 # Clean target (optional, doesn't do much in this case but placeholder for future extensions)
 clean:

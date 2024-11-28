@@ -64,7 +64,8 @@ var (
 	clientsNode         map[string]map[string][]net.Addr
 	clientsMu           sync.Mutex // Mutex to protect the client list
 	streamConnectionsIn map[string]*net.UDPConn
-	streamConnMu        sync.Mutex // Mutex to protect streamConnectionsIn
+	streamConnMu        sync.Mutex        // Mutex to protect streamConnectionsIn
+	routingTable        map[string]string //Roting Table
 )
 
 // Updated getAllNames Function
@@ -376,10 +377,6 @@ func calculateBestPath(probingState *ProbingState) (string, PathMetrics) {
 		}
 		averageJitter := totalJitter / float64(len(jitters))
 
-		fmt.Printf("DELAY:%f\n", averageDelay)
-		fmt.Printf("JITTER:%f\n", totalJitter)
-		fmt.Printf("SUCCESSCount: %d\n", totalSuccess)
-
 		// Store results in the map for this path (key)
 		result[key] = PathMetrics{
 			AverageDelay:  averageDelay,
@@ -580,12 +577,46 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 			// 10 second timeout
 			if probingState.Timer == nil {
-				probingState.Timer = time.AfterFunc(10*time.Second, func() {
+				probingState.Timer = time.AfterFunc(5*time.Second, func() {
 					//ensures that it does not have problems in the first run
 					if len(probingState.ProbingMap) > 0 {
 						bestPath, bestMetric = calculateBestPath(probingState) // Calculate the best path
+						fmt.Printf("Best Path: %s	Metrics:%v\n", bestPath, bestMetric)
 						//SEND UPDATE HERE
-						fmt.Printf("Best Path: %s, Metrics:%v\n", bestPath, bestMetric)
+						// Split the string by commas to create a slice
+						elements := strings.Split(bestPath, ",")
+
+						// Marshal the slice into JSON
+						best, err := json.Marshal(elements)
+						if err != nil {
+							fmt.Printf("Error marshalling JSON: %v\n", err)
+							return
+						}
+
+						_, jsonUpdate, err := ExtractFirstElement(best)
+						if handleError(err, "Failed to extract first element from JSON update: %s", string(best)) {
+							return
+						}
+
+						first, restJSON, err := ExtractFirstElement(jsonUpdate)
+						if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
+							return
+						}
+
+						nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
+						if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
+							return
+						}
+
+						updateRoutingTable(routingTable, "stream1", node.Neighbors[first])
+						//updateRoutingTable(routingTable, "stream2", node.Neighbors[first])
+						updateRoutingTable(routingTable, "stream3", node.Neighbors[first])
+
+						err = sendUpdatePacket(protocolConn, node.Name, restJSON, nextInRouteIp)
+						if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
+							return
+						}
+
 						probingState.ProbingMap = make(map[string][]Probing) // Reset map
 						expectedID++                                         // Move to the next probing ID
 					}
@@ -980,8 +1011,8 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 				log.Printf("Failed to send packet to %v: %v", client, err)
 			} else {
 				// Log packet details after successful send
-				log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-					client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+				//log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+				//	client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
 			}
 		}
 		clientsMu.Unlock() // Unlock the client list
@@ -1072,6 +1103,7 @@ func ExtractFirstElement(jsonData []byte) (string, []byte, error) {
 }
 func updateRoutingTable(routingTable map[string]string, valueToUpdate string, ipNextHop string) {
 	routingTable[valueToUpdate] = ipNextHop
+	fmt.Printf("Update Routing Table for: %s\n", valueToUpdate)
 }
 
 func getNextInRouteAddr(nextInRouteIp string) (*net.UDPAddr, error) {
@@ -1141,26 +1173,7 @@ func main() {
 		}
 		defer protocolConn.Close()
 
-		routingTable := make(map[string]string)
-
-		jsonUpdate := []byte(`["O1", "S1"]`)
-
-		first, restJSON, err := ExtractFirstElement(jsonUpdate)
-		if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
-			return
-		}
-
-		nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
-		if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
-			return
-		}
-
-		updateRoutingTable(routingTable, "stream1", node.Neighbors[first])
-
-		err = sendUpdatePacket(protocolConn, node.Name, restJSON, nextInRouteIp)
-		if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
-			return
-		}
+		routingTable = make(map[string]string)
 
 		go node.handleConnectionsPOP(protocolConn, routingTable, node.Neighbors, node.Name)
 
@@ -1172,7 +1185,7 @@ func main() {
 		fmt.Printf("Node %s initialized as a regular node with neighbors: %v\n", node.Name, node.Neighbors)
 
 		// routingTable [ "Nome da Stream" ] = "IP Do Nodo onde ir buscar a stream"
-		routingTable := make(map[string]string)
+		routingTable = make(map[string]string)
 
 		// abrir porta udp para escuta de pedidos
 		protocolConn, err := setupUDPListener(*ip, node.Port)
