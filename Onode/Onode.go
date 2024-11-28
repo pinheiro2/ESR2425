@@ -768,6 +768,11 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			if !exists {
 				// Connection doesn't exist, create a new one
 				var err error
+				fmt.Println("Routing Table:")
+				for key, value := range routingTable {
+					fmt.Printf("  Destination: %s, Next Hop: %s\n", key, value)
+				}
+				fmt.Printf("routingTable[popOfRoute]: %s\n", routingTable[popOfRoute])
 				streamConnIn, err = setupUDPConnection(routingTable[popOfRoute], 8000)
 				if err != nil {
 					log.Fatalf("Error setting up UDP connection to %s for content \"%s\": %v", routingTable[popOfRoute], popOfRoute, err)
@@ -882,7 +887,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 				continue
 			}
 
-			// popOfRoute := parts[1]
+			//popOfRoute := parts[1]
 
 			updateDataString := strings.Join(parts[2:], " ") // Extract the JSON data
 			updateData := []byte(updateDataString)
@@ -1011,8 +1016,8 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 				log.Printf("Failed to send packet to %v: %v", client, err)
 			} else {
 				// Log packet details after successful send
-				log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-					client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+				//log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+				//	client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
 			}
 		}
 		clientsMu.Unlock() // Unlock the client list
@@ -1059,7 +1064,7 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, popOfRout
 					log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
 				} else {
 					// Uncomment the next line for debugging purposes
-					log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
+					//log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
 				}
 			}
 		}
@@ -1234,6 +1239,8 @@ func main() {
 		videos := make(map[string]string)
 		streams := make(map[string]*bufio.Reader)
 		LoadJSONToMap("streams.json", videos)
+
+		routingTable = make(map[string]string)
 
 		ffmpegCommands, err := prepareFFmpegCommands(videos)
 		if err != nil {
