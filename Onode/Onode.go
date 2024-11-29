@@ -55,6 +55,7 @@ type ProbingState struct {
 type PathMetrics struct {
 	AverageDelay  float64 `json:"averageDelay"`
 	AverageJitter float64 `json:"averageJitter"`
+	TotalCount    int     `json:"TotalCount"`
 	SuccessRate   float64 `json:"successRate"`
 	Score         float64 `json:"score"`
 }
@@ -289,7 +290,7 @@ func calculateScores(metrics map[string]PathMetrics, maxAvgTime, maxJitter float
 
 		metrics[key] = metric
 
-		fmt.Printf("Path: %s Score: %f\n", key, metric.Score)
+		//fmt.Printf("Path: %s Score: %f\n", key, metric.Score)
 	}
 
 	return metrics
@@ -381,6 +382,7 @@ func calculateBestPath(probingState *ProbingState) (string, PathMetrics) {
 		result[key] = PathMetrics{
 			AverageDelay:  averageDelay,
 			AverageJitter: averageJitter,
+			TotalCount:    totalCount,
 			SuccessRate:   float64(totalSuccess) / float64(totalCount),
 		}
 	}
@@ -432,6 +434,8 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 		ProbingMap: make(map[string][]Probing),
 	}
 	expectedID := 0
+
+	firstProbing := true
 
 	var bestPath string
 	var bestMetric PathMetrics
@@ -569,6 +573,12 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				continue
 			}
 
+			//se for a primeira vez que recebe um probing o expectedId deve ser igual ao id do probing que recebe
+			if firstProbing {
+				expectedID = probing.Id
+				firstProbing = false
+			}
+
 			// Ignore messages with unexpected IDs
 			if probing.Id != expectedID {
 				log.Printf("Ignoring probing with unexpected ID: %d (expected: %d)", probing.Id, expectedID)
@@ -580,11 +590,23 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				probingState.Timer = time.AfterFunc(3*time.Second, func() {
 					//ensures that it does not have problems in the first run
 					if len(probingState.ProbingMap) > 0 {
-						bestPath, bestMetric = calculateBestPath(probingState) // Calculate the best path
-						fmt.Printf("Best Path: %s	Metrics:%v\n", bestPath, bestMetric)
-						//SEND UPDATE HERE
-						// Split the string by commas to create a slice
-						elements := strings.Split(bestPath, ",")
+						newbestPath, newbestMetric := calculateBestPath(probingState) // Calculate the best path
+						fmt.Printf("Best Path: %s	Metrics:%v\n", newbestPath, newbestMetric)
+
+						//best path changed
+						if newbestPath != bestPath {
+							if bestPath != "" {
+								//send wtv it is to client to make it end stream and to request it again
+								fmt.Printf("Best Path changed from: %s to: %s\n", bestPath, newbestPath)
+								fmt.Printf("Metrics changed from: %v to: %v\n", bestMetric, newbestMetric)
+							}
+						}
+						bestPath = newbestPath
+						bestMetric = newbestMetric
+
+						//print temporatio
+
+						elements := strings.Split(newbestPath, ",")
 
 						// Marshal the slice into JSON
 						best, err := json.Marshal(elements)
@@ -654,9 +676,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			probingState.ProbingMap[pathKey] = append(probingState.ProbingMap[pathKey], probing)
 			//log.Printf("Probing added for path: %s", pathKey)
 
-			fmt.Printf("Ultima paragem do Probing\n")
-
-		case "PING":
+		case "PERFTEST":
 
 			response := []byte("pong")
 			_, err = protocolConn.WriteTo(response, clientAddr)
@@ -857,9 +877,24 @@ func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string
 
 func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
 
-	//ciclo the timeout
-	// initializeProbing recebe o numero de probings que tem de mandar e o id do probing
-	node.initializeProbing(conn, 3, 0)
+	// Cria um ticker para executar initializeProbing a cada 30 segundos
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// Variável para rastrear o probeID
+	probeID := 0
+
+	// Executa a primeira chamada imediatamente
+	node.initializeProbing(conn, 3, probeID)
+	probeID++ // Incrementa o ID após a primeira chamada
+
+	// Goroutine para executar initializeProbing periodicamente
+	go func() {
+		for range ticker.C {
+			node.initializeProbing(conn, 3, probeID)
+			probeID++ // Incrementa o ID após cada chamada
+		}
+	}()
 
 	clients := make(map[string][]net.Addr)
 
@@ -1021,8 +1056,8 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 				log.Printf("Failed to send packet to %v: %v", client, err)
 			} else {
 				// Log packet details after successful send
-				//log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-				//	client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+				log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+					client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
 			}
 		}
 		clientsMu.Unlock() // Unlock the client list
@@ -1069,7 +1104,7 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, popOfRout
 					log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
 				} else {
 					// Uncomment the next line for debugging purposes
-					//log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
+					log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
 				}
 			}
 		}

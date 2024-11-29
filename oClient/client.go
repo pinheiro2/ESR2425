@@ -87,7 +87,7 @@ func measureNodeResponse(node *Node, wg *sync.WaitGroup) {
 	}
 	defer conn.Close()
 
-	message := []byte("PING")
+	message := []byte("PERFTEST")
 	start := time.Now()
 
 	// Send a UDP message
@@ -137,15 +137,6 @@ func testNodesMultipleTimes(nodes []*Node, testCount int) {
 	// Process and print results for each node
 	for _, node := range nodes {
 
-		//var totalDuration time.Duration
-		//
-		//for _, responseTime := range node.ResponseTimes {
-		//	totalDuration += responseTime
-		//}
-		//fmt.Printf("Address: %s, Average Time: %v, TotalTime:%v, Success Count: %d, Total Count: %d\n",
-		//	node.Address, node.AverageTime, totalDuration, node.SuccessCount, node.TotalCount)
-
-		// Calculate jitter for each node if needed
 		node.Jitter = calculateJitter(node)
 		//fmt.Printf("Node %s - Jitter: %v\n", node.Address, node.Jitter)
 	}
