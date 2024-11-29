@@ -24,6 +24,9 @@ client2:
 client3:
 	$(MAKE) client STREAM=stream3
 
+client4:
+	$(MAKE) client STREAM=stream2
+
 
 # Clean target (optional, doesn't do much in this case but placeholder for future extensions)
 clean:

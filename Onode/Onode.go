@@ -454,7 +454,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 		// Read the message from the buffer as a string
 		clientMessage := string(buf[:n])
-		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
+		//log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
 
 		// Split the message into parts by whitespace
 		parts := strings.Fields(clientMessage)
@@ -507,7 +507,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			updateRoutingTable(routingTable, popOfRoute, neighbors[first])
 
 			// Send the update packet
-			if handleError(sendUpdatePacket(protocolConn, first, restJSON, nextInRouteIp), "Failed to send update packet to %s for \"%s\"", nextInRouteIp, first) {
+			if handleError(sendUpdatePacket(protocolConn, popOfRoute, restJSON, nextInRouteIp), "Failed to send update packet to %s for \"%s\"", nextInRouteIp, first) {
 				continue
 			}
 
@@ -577,7 +577,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 			// 10 second timeout
 			if probingState.Timer == nil {
-				probingState.Timer = time.AfterFunc(5*time.Second, func() {
+				probingState.Timer = time.AfterFunc(3*time.Second, func() {
 					//ensures that it does not have problems in the first run
 					if len(probingState.ProbingMap) > 0 {
 						bestPath, bestMetric = calculateBestPath(probingState) // Calculate the best path
@@ -593,15 +593,20 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 							return
 						}
 
-						_, jsonUpdate, err := ExtractFirstElement(best)
-						if handleError(err, "Failed to extract first element from JSON update: %s", string(best)) {
+						popOfRoute, jsonUpdate, err := ExtractFirstElement(best)
+						if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
 							return
 						}
+
+						//fmt.Printf("POP: %s\n", popOfRoute)
 
 						first, restJSON, err := ExtractFirstElement(jsonUpdate)
 						if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
 							return
 						}
+
+						//fmt.Printf("First: %s\n", first)
+						//fmt.Printf("Rest: %s\n", restJSON)
 
 						nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
 						if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
@@ -612,7 +617,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 						updateRoutingTable(routingTable, "stream2", node.Neighbors[first])
 						updateRoutingTable(routingTable, "stream3", node.Neighbors[first])
 
-						err = sendUpdatePacket(protocolConn, node.Name, restJSON, nextInRouteIp)
+						err = sendUpdatePacket(protocolConn, popOfRoute, restJSON, nextInRouteIp)
 						if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
 							return
 						}
@@ -647,7 +652,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 			//Add the Probing to the map
 			probingState.ProbingMap[pathKey] = append(probingState.ProbingMap[pathKey], probing)
-			log.Printf("Probing added for path: %s", pathKey)
+			//log.Printf("Probing added for path: %s", pathKey)
 
 			fmt.Printf("Ultima paragem do Probing\n")
 
@@ -684,7 +689,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 		// Read the message from the buffer as a string
 		clientMessage := string(buf[:n])
-		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
+		//log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
 
 		// Split the message into parts by whitespace
 		parts := strings.Fields(clientMessage)
@@ -737,7 +742,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			updateRoutingTable(routingTable, popOfRoute, neighbors[first])
 
 			// Send the update packet
-			if handleError(sendUpdatePacket(protocolConn, first, restJSON, nextInRouteIp), "Failed to send update packet to %s for \"%s\"", nextInRouteIp, first) {
+			if handleError(sendUpdatePacket(protocolConn, popOfRoute, restJSON, nextInRouteIp), "Failed to send update packet to %s for \"%s\"", nextInRouteIp, first) {
 				continue
 			}
 
@@ -868,7 +873,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 		// Read the message from the buffer as a string
 		clientMessage := string(buf[:n])
-		log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
+		//log.Printf("Received message from client %s: %s", clientAddr, clientMessage)
 
 		// Split the message into parts by whitespace
 		parts := strings.Fields(clientMessage)
