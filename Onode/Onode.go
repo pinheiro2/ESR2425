@@ -818,7 +818,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				log.Printf("New connection established for content \"%s\"", popOfRoute)
 
 				// Forward the stream to the client
-				go forwardToClientsNode(protocolConn, streamConnIn, popOfRoute, clientsNode[contentName])
+				go forwardToClientsNode(protocolConn, streamConnIn, clientsNode[contentName])
 			} else {
 				log.Printf("Reusing existing connection for POP \"%s\"", popOfRoute)
 			}
