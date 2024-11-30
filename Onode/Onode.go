@@ -1079,6 +1079,8 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
+			// TODO: change routing to node name
+
 			addClientAddress(contentName, clientAddr, clients, &clientsMu)
 
 			if streams[contentName] == nil {
