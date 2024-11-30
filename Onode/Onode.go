@@ -982,25 +982,17 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 					if err != nil {
 						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
-						// Restart the stream if it has ended
+						// Catch if stream has ended
 						if err.Error() == "end of stream reached" {
-
-							// log.Printf("Restarting stream for content \"%s\"", contentName)
 
 							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
 							if err != nil {
 								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
 							}
-							// reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
-							// if err != nil {
-							// 	log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
-							// }
 
 							streams[contentName] = nil
 							defer cleanup()
 
-							// // Restart sending RTP packets
-							// sendRTPPackets(conn, reader, contentName, clients)
 						}
 					}
 				}()
