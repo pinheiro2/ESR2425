@@ -746,6 +746,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			log.Printf("Received empty message from client %s", clientAddr)
 			continue
 		}
+		log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
 		// Parse the command and handle each case
 		command := parts[0]
