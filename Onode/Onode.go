@@ -482,6 +482,8 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			continue
 		}
 
+		log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
@@ -493,6 +495,10 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			}
 			contentName := parts[1]
 			// popOfRoute := parts[2]
+
+			streamConnMu.Lock()                      // Lock the mutex to ensure safe access to the shared resource
+			delete(streamConnectionsIn, contentName) // Remove the entry for the specified contentName
+			streamConnMu.Unlock()                    // Unlock the mutex after modifying the map
 
 			clientsMu.Lock()
 			delete(clients, contentName) // Removes contentName from map and releases memory
@@ -764,6 +770,12 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 			sendEndStreamClientsNode(protocolConn, contentName, popOfRoute, clientsNode[contentName])
 
+			// cleans input
+			streamConnMu.Lock()                      // Lock the mutex to ensure safe access to the shared resource
+			delete(streamConnectionsIn, contentName) // Remove the entry for the specified contentName
+			streamConnMu.Unlock()                    // Unlock the mutex after modifying the map
+
+			// Stops sending
 			clientsMu.Lock()
 			delete(clientsNode, contentName) // Removes contentName from map and releases memory
 			clientsMu.Unlock()
@@ -958,7 +970,6 @@ func sendEndStreamClientsCS(conn *net.UDPConn, contentName string, popOfRoute st
 		if err != nil {
 			log.Printf("Error sending ENDSTREAM to client %v for content \"%s\": %v", client, contentName, err)
 		} else {
-			log.Printf("Sent ENDSTREAM to client %v for content \"%s\"", client, contentName)
 		}
 	}
 }
