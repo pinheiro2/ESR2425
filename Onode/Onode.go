@@ -1106,7 +1106,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
 							}
 
-							streams[contentName] = nil
+							delete(streams, contentName)
 							defer cleanup()
 
 						}
