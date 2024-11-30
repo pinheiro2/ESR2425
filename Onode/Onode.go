@@ -1106,6 +1106,10 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
 							}
 
+							clientsMu.Lock()
+							delete(clients, contentName) // Removes contentName from map and releases memory
+							clientsMu.Unlock()
+
 							delete(streams, contentName)
 							defer cleanup()
 
