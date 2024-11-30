@@ -913,26 +913,27 @@ func sendEndStreamClients(conn *net.UDPConn, reader *bufio.Reader, contentName s
 	}
 
 	// Send the ENDSTREAM message to each client
-	for _, addr := range clientAddrs {
-		err := sendEndStream(conn, contentName)
+	for _, client := range clientAddrs {
+		err := sendEndStream(conn, &client, contentName)
 		if err != nil {
-			log.Printf("Error sending ENDSTREAM to client %v for content \"%s\": %v", addr, contentName, err)
+			log.Printf("Error sending ENDSTREAM to client %v for content \"%s\": %v", client, contentName, err)
 		} else {
-			log.Printf("Sent ENDSTREAM to client %v for content \"%s\"", addr, contentName)
+			log.Printf("Sent ENDSTREAM to client %v for content \"%s\"", client, contentName)
 		}
 	}
 }
 
-func sendEndStream(conn *net.UDPConn, contentName string) error {
+func sendEndStream(conn *net.UDPConn, client *net.Addr, contentName string) error {
 
-	if conn == nil {
+	if client == nil {
 		return fmt.Errorf("connection is nil; cannot send ENDSTREAM for content: %s", contentName)
 	}
 	// Prefix the content name with "Request:"
 	message := "ENDSTREAM " + contentName
 
 	// Send the request message
-	_, err := conn.Write([]byte(message))
+	_, err := conn.WriteTo([]byte(message), *client)
+
 	if err != nil {
 		return fmt.Errorf("failed to send content name: %w", err)
 	}
