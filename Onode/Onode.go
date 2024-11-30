@@ -760,6 +760,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			}
 			contentName := parts[1]
 			// popOfRoute := parts[2]
+			log.Printf("Clients to send endstream: %v ", clientsNode[contentName])
 
 			sendEndStreamClients(protocolConn, contentName, clientsNode[contentName])
 
