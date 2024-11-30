@@ -961,8 +961,31 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 				log.Printf("LIST OF CLIENTS: %s", clients[contentName])
 
-				go sendRTPPackets(conn, reader, contentName, clients)
+				// go sendRTPPackets(conn, reader, contentName, clients)
+				// Send RTP packets and handle errors
+				// TODO: lidar com fim de uma stream e remeco da mesma
+				go func() {
+					err := sendRTPPackets(conn, reader, contentName, clients)
+					if err != nil {
+						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
+						// Restart the stream if it has ended
+						if err.Error() == "end of stream reached" {
+							log.Printf("Restarting stream for content \"%s\"", contentName)
+
+							reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
+							if err != nil {
+								log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
+							}
+
+							streams[contentName] = reader
+							defer cleanup()
+
+							// Restart sending RTP packets
+							sendRTPPackets(conn, reader, contentName, clients)
+						}
+					}
+				}()
 			}
 
 		default:
