@@ -737,6 +737,19 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 		command := parts[0]
 		switch command {
 
+		case "ENDSTREAM":
+
+			if len(parts) < 3 {
+				log.Printf("ENDSTREAM command from client %s is missing args", clientAddr)
+				continue
+			}
+			contentName := parts[1]
+			// popOfRoute := parts[2]
+
+			clientsMu.Lock()
+			delete(clientsNode, contentName) // Removes contentName from map and releases memory
+			clientsMu.Unlock()
+
 		case "UPDATE":
 			if len(parts) < 3 {
 				log.Printf("UPDATE command from client %s is missing data", clientAddr)
@@ -887,6 +900,23 @@ func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string
 		return fmt.Errorf("failed to send content name: %w", err)
 	}
 	log.Printf("Requested content: %s\n", contentName)
+	return nil
+}
+
+func sendEndStream(conn *net.UDPConn, contentName string, popOfRoute string) error {
+
+	if conn == nil {
+		return fmt.Errorf("connection is nil; cannot send ENDSTREAM for content: %s", contentName)
+	}
+	// Prefix the content name with "Request:"
+	message := "ENDSTREAM " + contentName + " " + popOfRoute
+
+	// Send the request message
+	_, err := conn.Write([]byte(message))
+	if err != nil {
+		return fmt.Errorf("failed to send content name: %w", err)
+	}
+	log.Printf("ENDSTREAM content: %s\n", contentName)
 	return nil
 }
 
