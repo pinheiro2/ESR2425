@@ -759,10 +759,10 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				continue
 			}
 			contentName := parts[1]
-			// popOfRoute := parts[2]
+			popOfRoute := parts[2]
 			log.Printf("Clients to send endstream: %v ", clientsNode[contentName])
 
-			sendEndStreamClients(protocolConn, contentName, clientsNode[contentName])
+			sendEndStreamClientsNode(protocolConn, contentName, popOfRoute, clientsNode[contentName])
 
 			clientsMu.Lock()
 			delete(clientsNode, contentName) // Removes contentName from map and releases memory
@@ -924,8 +924,28 @@ func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string
 }
 
 // sendEndStreamClients sends the "ENDSTREAM" message to all clients for the given content name.
-func sendEndStreamClients(conn *net.UDPConn, contentName string, clients map[string][]net.Addr) {
+func sendEndStreamClientsNode(conn *net.UDPConn, contentName string, popOfRoute string, clients map[string][]net.Addr) {
 	// Check if there are any clients for the given contentName
+
+	clientAddrs, exists := clients[popOfRoute]
+	if !exists || len(clientAddrs) == 0 {
+		log.Printf("No clients to send ENDSTREAM for content: %s", contentName)
+		return
+	}
+
+	// Send the ENDSTREAM message to each client
+	for _, client := range clientAddrs {
+		err := sendEndStream(conn, &client, contentName, popOfRoute)
+		if err != nil {
+			log.Printf("Error sending ENDSTREAM to client %v for content \"%s\": %v", client, contentName, err)
+		} else {
+			log.Printf("Sent ENDSTREAM to client %v for content \"%s\"", client, contentName)
+		}
+	}
+}
+func sendEndStreamClientsCS(conn *net.UDPConn, contentName string, popOfRoute string, clients map[string][]net.Addr) {
+	// Check if there are any clients for the given contentName
+
 	clientAddrs, exists := clients[contentName]
 	if !exists || len(clientAddrs) == 0 {
 		log.Printf("No clients to send ENDSTREAM for content: %s", contentName)
@@ -934,7 +954,7 @@ func sendEndStreamClients(conn *net.UDPConn, contentName string, clients map[str
 
 	// Send the ENDSTREAM message to each client
 	for _, client := range clientAddrs {
-		err := sendEndStream(conn, &client, contentName)
+		err := sendEndStream(conn, &client, contentName, popOfRoute)
 		if err != nil {
 			log.Printf("Error sending ENDSTREAM to client %v for content \"%s\": %v", client, contentName, err)
 		} else {
@@ -942,7 +962,8 @@ func sendEndStreamClients(conn *net.UDPConn, contentName string, clients map[str
 		}
 	}
 }
-func sendEndStream(conn *net.UDPConn, client *net.Addr, contentName string) error {
+
+func sendEndStream(conn *net.UDPConn, client *net.Addr, contentName string, popOfRoute string) error {
 	if client == nil {
 		return fmt.Errorf("client address is nil; cannot send ENDSTREAM for content: %s", contentName)
 	}
@@ -961,7 +982,7 @@ func sendEndStream(conn *net.UDPConn, client *net.Addr, contentName string) erro
 	}
 
 	// Prefix the content name with "ENDSTREAM:"
-	message := "ENDSTREAM " + contentName
+	message := "ENDSTREAM " + contentName + " " + popOfRoute
 
 	// Send the request message to the modified target address (port 8000)
 	_, err := conn.WriteToUDP([]byte(message), targetAddr)
@@ -1043,7 +1064,8 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 			}
 
 			contentName := parts[1]
-			// popOfRoute := parts[2]
+			popOfRoute := parts[2]
+
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
 			addClientAddress(contentName, clientAddr, clients, &clientsMu)
@@ -1067,7 +1089,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 						// Catch if stream has ended
 						if err.Error() == "end of stream reached" {
-							sendEndStreamClients(conn, contentName, clients)
+							sendEndStreamClientsCS(conn, contentName, popOfRoute, clients)
 							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
 							if err != nil {
 								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
