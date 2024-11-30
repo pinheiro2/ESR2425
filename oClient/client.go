@@ -58,6 +58,17 @@ func loadNodesFromFile(filename string) ([]*Node, error) {
 	return nodes, nil
 }
 
+// Function to reset the metrics of each node after testing
+func resetNodeMetrics(node *Node) {
+	// Reset the metrics to "clean" the node after each test cycle
+	node.ResponseTimes = nil
+	node.AverageTime = 0
+	node.Jitter = 0
+	node.SuccessCount = 0
+	node.TotalCount = 0
+	node.Score = 0
+}
+
 // calculateJitter calculates the jitter for a node's response times
 func calculateJitter(node *Node) time.Duration {
 	if len(node.ResponseTimes) <= 1 {
@@ -343,23 +354,37 @@ func sendContentRequest(conn *net.UDPConn, contentName string) error {
 	fmt.Printf("Requested content: %s\n", contentName)
 	return nil
 }
+
 func main() {
+	// Define the port flag and parse the command-line arguments
+	stream := flag.String("stream", "stream1", "stream to connect to")
+	//popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
+	//port := flag.Int("port", 8000, "UDP port to connect to on the server")
+	flag.Parse()
 	nodes, err := loadNodesFromFile("pops.json")
 	if err != nil {
 		fmt.Printf("Error loading nodes: %v\n", err)
 		os.Exit(1)
 	}
 
+	var conn *net.UDPConn
+	var connMutex sync.Mutex // Protect the connection with a mutex
+
 	var bestNode *Node
+	var previousBestNodeAddr string
 	testCount := 3
 
 	//first time
 	testNodesMultipleTimes(nodes, testCount)
 	bestNode = findBestNode(nodes)
 	fmt.Printf("Eu sou o melhor node: %s\n", bestNode.Address)
+	previousBestNodeAddr = bestNode.Address
+	for _, node := range nodes {
+		resetNodeMetrics(node)
+	}
 
 	// Create a ticker that ticks every minute (60 seconds)
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	// Run the task every time the ticker ticks in a separate goroutine
@@ -369,17 +394,40 @@ func main() {
 			testNodesMultipleTimes(nodes, testCount)
 			bestNode = findBestNode(nodes) // Update bestNode each time
 			fmt.Printf("Best node updated: %s\n", bestNode.Address)
+
+			// If the best node address has changed, update the stream request
+			if bestNode.Address != previousBestNodeAddr {
+				fmt.Printf("Best node changed, reinitializing stream request to: %s\n", bestNode.Address)
+
+				connMutex.Lock()
+
+				// Reinitialize the UDP connection and send a new content request to the new best node
+				conn, err := setupUDPConnection(bestNode.Address, bestNode.Port)
+				if err != nil {
+					log.Fatalf("Error setting up UDP connection: %v", err)
+				}
+				defer conn.Close()
+
+				// Send the content request to the new best node
+				err = sendContentRequest(conn, *stream)
+				if err != nil {
+					log.Fatalf("Error sending content request: %v", err)
+				}
+
+				// Update the previous best node address
+				previousBestNodeAddr = bestNode.Address
+				connMutex.Unlock()
+
+			}
+			for _, node := range nodes {
+				resetNodeMetrics(node)
+			}
+
 		}
 	}()
 
-	// Define the port flag and parse the command-line arguments
-	stream := flag.String("stream", "stream1", "stream to connect to")
-	//popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
-	//port := flag.Int("port", 8000, "UDP port to connect to on the server")
-	flag.Parse()
-
 	// Set up the UDP connection to the specified port
-	conn, err := setupUDPConnection(bestNode.Address, bestNode.Port)
+	conn, err = setupUDPConnection(bestNode.Address, bestNode.Port)
 	if err != nil {
 		log.Fatalf("Error setting up UDP connection: %v", err)
 	}
