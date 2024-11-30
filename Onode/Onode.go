@@ -120,20 +120,34 @@ func handleError(err error, errMsg string, args ...interface{}) bool {
 
 func prepareFFmpegCommands(videos map[string]string) (map[string]*exec.Cmd, error) {
 	ffmpegMap := make(map[string]*exec.Cmd)
+	var err error
 
 	for name, videoPath := range videos {
-		ffmpegCmd := exec.Command("ffmpeg",
-			"-stream_loop", "-1", // Loop the video infinitely
-			"-i", videoPath, // Input file
-			"-f", "image2pipe", // Output format for piping images
-			"-vcodec", "mjpeg", // Encode as JPEG
-			"-q:v", "2", // Quality (lower is better)
-			"pipe:1") // Output to stdout
+		// ffmpegCmd := exec.Command("ffmpeg",
+		// 	// "-stream_loop", "-1", // Loop the video infinitely
+		// 	"-i", videoPath, // Input file
+		// 	"-f", "image2pipe", // Output format for piping images
+		// 	"-vcodec", "mjpeg", // Encode as JPEG
+		// 	"-q:v", "2", // Quality (lower is better)
+		// 	"pipe:1") // Output to stdout
 
-		ffmpegMap[name] = ffmpegCmd
+		ffmpegMap[name], err = prepareFFmpegCommand(videoPath)
 	}
 
-	return ffmpegMap, nil
+	return ffmpegMap, err
+}
+
+// Function to create an FFmpeg command for a single video
+func prepareFFmpegCommand(videoPath string) (*exec.Cmd, error) {
+	ffmpegCmd := exec.Command("ffmpeg",
+		// "-stream_loop", "-1", // Loop the video infinitely
+		"-i", videoPath, // Input file
+		"-f", "image2pipe", // Output format for piping images
+		"-vcodec", "mjpeg", // Encode as JPEG
+		"-q:v", "2", // Quality (lower is better)
+		"pipe:1") // Output to stdout
+
+	return ffmpegCmd, nil
 }
 
 // Starts ffmpeg to output video frames as JPEGs for Content Server
