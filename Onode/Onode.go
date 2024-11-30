@@ -61,6 +61,7 @@ type PathMetrics struct {
 }
 
 var (
+	videos              map[string]string
 	clients             map[string][]net.Addr
 	clientsNode         map[string]map[string][]net.Addr
 	clientsMu           sync.Mutex // Mutex to protect the client list
@@ -987,6 +988,10 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 						if err.Error() == "end of stream reached" {
 							log.Printf("Restarting stream for content \"%s\"", contentName)
 
+							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
+							if err != nil {
+								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
+							}
 							reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
 							if err != nil {
 								log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
@@ -1289,7 +1294,7 @@ func main() {
 	case "CS":
 		// Content Server: Stream video frames to any connecting POP nodes
 
-		videos := make(map[string]string)
+		videos = make(map[string]string)
 		streams := make(map[string]*bufio.Reader)
 		LoadJSONToMap("streams.json", videos)
 
