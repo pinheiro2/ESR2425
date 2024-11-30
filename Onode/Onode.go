@@ -1080,7 +1080,7 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, clients m
 					log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
 				} else {
 					// Uncomment the next line for debugging purposes
-					log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
+					// log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
 				}
 			}
 		}
