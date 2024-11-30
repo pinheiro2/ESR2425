@@ -485,6 +485,18 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
+		case "ENDSTREAM":
+
+			if len(parts) < 2 {
+				log.Printf("ENDSTREAM command from client %s is missing args", clientAddr)
+				continue
+			}
+			contentName := parts[1]
+			// popOfRoute := parts[2]
+
+			clientsMu.Lock()
+			delete(clients, contentName) // Removes contentName from map and releases memory
+			clientsMu.Unlock()
 
 		case "UPDATE":
 			if len(parts) < 3 {
@@ -741,7 +753,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 		case "ENDSTREAM":
 
-			if len(parts) < 3 {
+			if len(parts) < 2 {
 				log.Printf("ENDSTREAM command from client %s is missing args", clientAddr)
 				continue
 			}
