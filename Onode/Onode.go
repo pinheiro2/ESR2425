@@ -1032,8 +1032,8 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 				log.Printf("Failed to send packet to %v: %v", client, err)
 			} else {
 				// Log packet details after successful send
-				log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-					client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+				// log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+				// 	client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
 			}
 		}
 		clientsMu.Unlock() // Unlock the client list

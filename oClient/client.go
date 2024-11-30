@@ -277,7 +277,7 @@ func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser, don
 				break
 			}
 
-			fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
+			// fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
 			time.Sleep(time.Millisecond * 33) // Simulate 30 FPS playback
 		}
 	}
