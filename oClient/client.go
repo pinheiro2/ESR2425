@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,14 +19,17 @@ import (
 )
 
 type Node struct {
-	Address       string `json:"address"`
-	Port          int
-	ResponseTimes []time.Duration
-	AverageTime   time.Duration
-	Jitter        time.Duration
-	SuccessCount  int
-	TotalCount    int
-	Score         float64
+	Address              string `json:"address"`
+	Port                 int
+	ResponseTimes        []time.Duration
+	AverageTime          time.Duration
+	Jitter               time.Duration
+	SuccessCount         int
+	TotalCount           int
+	Score                float64
+	ResponseAverageDelay time.Duration
+	ResponseJitter       time.Duration
+	ResponseSuccRate     float64
 }
 
 func loadNodesFromFile(filename string) ([]*Node, error) {
@@ -102,10 +107,44 @@ func measureNodeResponse(node *Node, wg *sync.WaitGroup) {
 	buffer := make([]byte, 1024)
 
 	// Wait for a response using Read()
-	_, err = conn.Read(buffer)
+
+	n, err := conn.Read(buffer)
 	duration := time.Since(start)
 
+	perfReport := string(buffer[:n])
+	parts := strings.Fields(perfReport)
+	if len(parts) != 4 {
+		log.Printf("PERFREPORT in the wrong format")
+	}
+	// Parse the averageDelay string to a float64 and convert to time.Duration
+	avgDelay, err := strconv.ParseFloat(parts[1], 64) // parts[0] = averageDelay
+	if err != nil {
+		log.Printf("Error parsing average delay: %v", err)
+		return
+	}
+	// Convert averageDelay (milliseconds) to time.Duration (nanoseconds)
+	node.ResponseAverageDelay = time.Duration(avgDelay)
+
+	// Parse the averageJitter string to a float64 and convert to time.Duration
+	avgJitter, err := strconv.ParseFloat(parts[2], 64) // parts[1] = averageJitter
+	if err != nil {
+		log.Printf("Error parsing average jitter: %v", err)
+		return
+	}
+	// Convert averageJitter (milliseconds) to time.Duration (nanoseconds)
+	node.ResponseJitter = time.Duration(avgJitter)
+
+	// Parse the successRate string to float64
+	successRate, err := strconv.ParseFloat(parts[3], 64) // parts[2] = successRate
+	if err != nil {
+		log.Printf("Error parsing success rate: %v", err)
+		return
+	}
+	// Store success rate as float64
+	node.ResponseSuccRate = successRate
+
 	node.TotalCount++
+
 	if err == nil {
 		node.SuccessCount++
 		node.ResponseTimes = append(node.ResponseTimes, duration)
@@ -145,13 +184,13 @@ func testNodesMultipleTimes(nodes []*Node, testCount int) {
 // Method to calculate the score for the node based on the given weights
 func (n *Node) calculateScore(jitterWeight, avgTimeWeight, successWeight float64, maxAvgTime, maxJitter time.Duration) {
 	// Normalize Jitter: lower is better, so invert it
-	normalizedJitter := float64(n.Jitter) / float64(maxJitter) // Scale jitter based on the maximum jitter
+	normalizedJitter := (float64(n.Jitter) + float64(n.ResponseJitter)) / float64(maxJitter) // Scale jitter based on the maximum jitter
 	if normalizedJitter > 1 {
 		normalizedJitter = 1 // Cap jitter normalization to 1
 	}
 
 	// Normalize Average Time: lower is better, so invert it
-	normalizedAvgTime := float64(n.AverageTime) / float64(maxAvgTime) // Scale based on the max average time
+	normalizedAvgTime := (float64(n.AverageTime) + float64(n.ResponseAverageDelay)) / float64(maxAvgTime) // Scale based on the max average time
 	if normalizedAvgTime > 1 {
 		normalizedAvgTime = 1 // Cap the normalization to 1
 	}
@@ -160,6 +199,7 @@ func (n *Node) calculateScore(jitterWeight, avgTimeWeight, successWeight float64
 	successRate := 0.0
 	if n.TotalCount > 0 {
 		successRate = float64(n.SuccessCount) / float64(n.TotalCount)
+		successRate = (successRate + n.ResponseSuccRate) / float64(2)
 	}
 
 	// Compute the composite score as a weighted sum of factors
@@ -183,11 +223,11 @@ func findBestNode(nodes []*Node) *Node {
 
 	var maxAvgTime, maxJitter time.Duration
 	for _, node := range nodes {
-		if node.AverageTime > maxAvgTime {
-			maxAvgTime = node.AverageTime
+		if node.AverageTime+node.ResponseAverageDelay > maxAvgTime {
+			maxAvgTime = node.AverageTime + node.ResponseAverageDelay
 		}
-		if node.Jitter > maxJitter {
-			maxJitter = node.Jitter
+		if node.Jitter+node.ResponseJitter > maxJitter {
+			maxJitter = node.Jitter + node.ResponseJitter
 		}
 	}
 
@@ -203,6 +243,8 @@ func findBestNode(nodes []*Node) *Node {
 
 	for _, node := range nodes {
 		fmt.Printf("Adress:%s, Succes:%d, AverageTime:%v, Jitter:%v, Score:%f\n", node.Address, node.SuccessCount, node.AverageTime, node.Jitter, node.Score)
+
+		fmt.Printf("Adress:%s, Succes:%d, AverageTime:%v, Jitter:%v, Score:%f\n", node.Address, node.SuccessCount, node.AverageTime+node.ResponseAverageDelay, node.Jitter+node.ResponseJitter, node.Score)
 	}
 
 	// Return the node with the highest score
@@ -277,7 +319,7 @@ func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser, don
 				break
 			}
 
-			fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
+			//fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
 			time.Sleep(time.Millisecond * 33) // Simulate 30 FPS playback
 		}
 	}
@@ -308,12 +350,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	var bestNode *Node
 	testCount := 3
 
+	//first time
 	testNodesMultipleTimes(nodes, testCount)
-
-	bestNode := findBestNode(nodes)
+	bestNode = findBestNode(nodes)
 	fmt.Printf("Eu sou o melhor node: %s\n", bestNode.Address)
+
+	// Create a ticker that ticks every minute (60 seconds)
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	// Run the task every time the ticker ticks in a separate goroutine
+	go func() {
+		for range ticker.C {
+			// Call the function to test nodes and find the best one
+			testNodesMultipleTimes(nodes, testCount)
+			bestNode = findBestNode(nodes) // Update bestNode each time
+			fmt.Printf("Best node updated: %s\n", bestNode.Address)
+		}
+	}()
 
 	// Define the port flag and parse the command-line arguments
 	stream := flag.String("stream", "stream1", "stream to connect to")
