@@ -761,6 +761,8 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			contentName := parts[1]
 			// popOfRoute := parts[2]
 
+			sendEndStreamClients(protocolConn, contentName, clientsNode[contentName])
+
 			clientsMu.Lock()
 			delete(clientsNode, contentName) // Removes contentName from map and releases memory
 			clientsMu.Unlock()
@@ -921,7 +923,7 @@ func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string
 }
 
 // sendEndStreamClients sends the "ENDSTREAM" message to all clients for the given content name.
-func sendEndStreamClients(conn *net.UDPConn, reader *bufio.Reader, contentName string, clients map[string][]net.Addr) {
+func sendEndStreamClients(conn *net.UDPConn, contentName string, clients map[string][]net.Addr) {
 	// Check if there are any clients for the given contentName
 	clientAddrs, exists := clients[contentName]
 	if !exists || len(clientAddrs) == 0 {
@@ -1064,7 +1066,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 						// Catch if stream has ended
 						if err.Error() == "end of stream reached" {
-							sendEndStreamClients(conn, reader, contentName, clients)
+							sendEndStreamClients(conn, contentName, clients)
 							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
 							if err != nil {
 								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
