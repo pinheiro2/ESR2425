@@ -552,6 +552,8 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			streamConnIn, exists := streamConnectionsIn[contentName]
 			streamConnMu.Unlock()
 
+			log.Printf("LIST OF CLIENTS: %s", clients[contentName])
+
 			if !exists {
 				// Connection doesn't exist, create a new one
 				var err error
@@ -818,6 +820,8 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			streamConnIn, exists := streamConnectionsIn[contentName]
 			streamConnMu.Unlock()
 
+			log.Printf("LIST OF CLIENTS: %s", clientsNode[contentName])
+
 			if !exists {
 				// Connection doesn't exist, create a new one
 				var err error
@@ -922,22 +926,34 @@ func sendEndStreamClients(conn *net.UDPConn, reader *bufio.Reader, contentName s
 		}
 	}
 }
-
 func sendEndStream(conn *net.UDPConn, client *net.Addr, contentName string) error {
-
 	if client == nil {
-		return fmt.Errorf("connection is nil; cannot send ENDSTREAM for content: %s", contentName)
+		return fmt.Errorf("client address is nil; cannot send ENDSTREAM for content: %s", contentName)
 	}
-	// Prefix the content name with "Request:"
+
+	// Convert *net.Addr to *net.UDPAddr
+	udpAddr, ok := (*client).(*net.UDPAddr)
+	if !ok {
+		return fmt.Errorf("client address is not a valid UDP address")
+	}
+
+	// Create a new UDP address with the same IP but port 8000
+	targetAddr := &net.UDPAddr{
+		IP:   udpAddr.IP,   // Keep the same IP address
+		Port: 8000,         // Set the port to 8000
+		Zone: udpAddr.Zone, // Keep the same zone (if any)
+	}
+
+	// Prefix the content name with "ENDSTREAM:"
 	message := "ENDSTREAM " + contentName
 
-	// Send the request message
-	_, err := conn.WriteTo([]byte(message), *client)
-
+	// Send the request message to the modified target address (port 8000)
+	_, err := conn.WriteToUDP([]byte(message), targetAddr)
 	if err != nil {
 		return fmt.Errorf("failed to send content name: %w", err)
 	}
-	log.Printf("ENDSTREAM content: %s\n", contentName)
+
+	log.Printf("ENDSTREAM content: %s sent to %v\n", contentName, targetAddr)
 	return nil
 }
 
