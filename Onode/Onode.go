@@ -976,9 +976,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 				log.Printf("LIST OF CLIENTS: %s", clients[contentName])
 
-				// go sendRTPPackets(conn, reader, contentName, clients)
 				// Send RTP packets and handle errors
-				// TODO: lidar com fim de uma stream e remeco da mesma
 				go func() {
 					err := sendRTPPackets(conn, reader, contentName, clients)
 					if err != nil {
