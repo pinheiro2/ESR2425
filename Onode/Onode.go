@@ -1060,7 +1060,7 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-// Forwards data from Node to connected clients
+// Forwards data from Node to connected nodes
 func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, clients map[string][]net.Addr) {
 	buf := make([]byte, 150000)
 	for {
@@ -1088,7 +1088,7 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, clients m
 	}
 }
 
-// Forwards data from content server to connected clients (used by POP)
+// Forwards data from POP to connected clients
 func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn, popOfRoute string, clients map[string][]net.Addr) {
 	buf := make([]byte, 150000)
 	for {
