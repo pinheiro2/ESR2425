@@ -558,22 +558,6 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			}
 			contentName := parts[1]
 
-			NumberWatching := len(clients[contentName])
-
-			if NumberWatching > 1 {
-				// Find and remove clientAddr from clients[contentName]
-				for i, addr := range clients[contentName] {
-					if addr.String() == clientAddr.String() {
-						// Remove clientAddr by slicing out the element
-						clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
-						break
-					}
-				}
-			} else {
-				// Do something else if count is 1 or less
-				fmt.Println("One or no entries exist for", contentName)
-			}
-
 		case "ENDSTREAM":
 			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
@@ -819,7 +803,41 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				lastTimestamp, exists := clientsAlive[addr]
 				if exists && now.Sub(lastTimestamp) > 15*time.Second {
 					log.Printf("The client: %s is no longer alive\n", clientAddrStr)
+
 					delete(clientsAlive, addr)
+
+					var contentName string
+					found := false
+
+					for key, addrs := range clients {
+						for _, addr := range addrs {
+							if addr.String() == clientAddr.String() {
+								contentName = key
+								found = true
+								break
+							}
+						}
+						if found {
+							break
+						}
+					}
+
+					NumberWatching := len(clients[contentName])
+
+					if NumberWatching > 1 {
+						// Find and remove clientAddr from clients[contentName]
+						for i, addr := range clients[contentName] {
+							if addr.String() == clientAddr.String() {
+								// Remove clientAddr by slicing out the element
+								clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
+								break
+							}
+						}
+					} else {
+						// Do something else if count is 1 or less
+						fmt.Println("One or no entries exist for", contentName)
+					}
+
 				}
 				clientsAliveMu.Unlock()
 			}(clientAddrStr)
