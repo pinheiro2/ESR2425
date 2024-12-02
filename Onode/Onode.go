@@ -107,7 +107,7 @@ func (node *Node) initialize(bootstrapAddress string) {
 	}
 
 	node.Neighbors = neighbors
-	fmt.Printf("Node %s (Type: %s) - Stored neighbors: %v\n", node.Name, node.Type, node.Neighbors)
+	log.Printf("Node %s (Type: %s) - Stored neighbors: %v\n", node.Name, node.Type, node.Neighbors)
 }
 
 func handleError(err error, errMsg string, args ...interface{}) bool {
@@ -207,17 +207,23 @@ func (n *Node) initializeProbing(protocolConn *net.UDPConn, totalcount int, id i
 			},
 		},
 	}
+	var neighborsList []string
 
 	// Send the probing to all neighbors totalcount times
 	for i := 0; i < totalcount; i++ {
 		for neighbor := range n.Neighbors {
+			if i == 0 {
+				neighborsList = append(neighborsList, neighbor)
+			}
 
 			err := n.sendProbing(protocolConn, neighbor, probing)
 			if err != nil {
 				log.Printf("Error sending probing to %s: %v", neighbor, err)
 			}
 		}
+		log.Printf("Sending probing to neighbor:%s from node %s", neighborsList, n.Name)
 	}
+
 }
 
 func (n *Node) sendProbing(protocolConn *net.UDPConn, neighborName string, probing Probing) error {
@@ -239,8 +245,6 @@ func (n *Node) sendProbing(protocolConn *net.UDPConn, neighborName string, probi
 
 	neighborWithPort := fmt.Sprintf("%s:%d", neighborAddr, 8000)
 
-	fmt.Printf("%s\n", neighborWithPort)
-
 	// Create the UDP address for the neighbor
 	addr, err := net.ResolveUDPAddr("udp", neighborWithPort)
 	if err != nil {
@@ -249,7 +253,7 @@ func (n *Node) sendProbing(protocolConn *net.UDPConn, neighborName string, probi
 
 	finalMessage := append([]byte("PROBING "), probingData...)
 	// Send the probing data to the neighbor
-	log.Printf("Sending probing to neighbor: %s from node: %s", neighborName, n.Name)
+	//log.Printf("Sending probing to neighbor: %s from node: %s", neighborName, n.Name)
 	_, err = protocolConn.WriteTo(finalMessage, addr)
 	if err != nil {
 		return fmt.Errorf("failed to send probing: %v", err)
@@ -280,8 +284,8 @@ func (node *Node) filterNeighbors(probing *Probing) []string {
 func calculateScores(metrics map[string]PathMetrics, maxAvgTime, maxJitter float64) map[string]PathMetrics {
 	// Define weights for jitter, average delay, and success rate
 	const (
-		jitterWeight  = 0.4
-		avgTimeWeight = 0.3
+		jitterWeight  = 0.5
+		avgTimeWeight = 0.2
 		successWeight = 0.3
 	)
 
@@ -305,7 +309,7 @@ func calculateScores(metrics map[string]PathMetrics, maxAvgTime, maxJitter float
 
 		metrics[key] = metric
 
-		fmt.Printf("Path: %s \nDelay:%f Jitter:%f Score: %f\n", key, metric.AverageDelay, metric.AverageJitter, metric.Score)
+		//fmt.Printf("Path: %s Score: %f\n", key, metric.Score)
 	}
 
 	return metrics
@@ -482,7 +486,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			continue
 		}
 
-		log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+		//log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
 		// Parse the command and handle each case
 		command := parts[0]
@@ -626,14 +630,14 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 					//ensures that it does not have problems in the first run
 					if len(probingState.ProbingMap) > 0 {
 						newbestPath, newbestMetric := calculateBestPath(probingState) // Calculate the best path
-						fmt.Printf("Best Path: %s	Metrics:%v\n", newbestPath, newbestMetric)
+						log.Printf("Received %d paths with the best path being: %s Score:%f\n", len(probingState.ProbingMap), newbestPath, newbestMetric.Score)
 
 						//best path changed
 						if newbestPath != bestPath {
 							if bestPath != "" {
 								//send wtv it is to client to make it end stream and to request it again
-								fmt.Printf("Best Path changed from: %s to: %s\n", bestPath, newbestPath)
-								fmt.Printf("Metrics changed from: %v to: %v\n", bestMetric, newbestMetric)
+								log.Printf("Best Path changed from: %s to: %s\n", bestPath, newbestPath)
+								//fmt.Printf("Metrics changed from: %v to: %v\n", bestMetric, newbestMetric)
 							}
 						}
 						bestPath = newbestPath
@@ -716,7 +720,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			response := fmt.Sprintf("PERFREPORT %f %f %f", bestMetric.AverageDelay, bestMetric.AverageJitter, bestMetric.SuccessRate)
 			_, err = protocolConn.WriteTo([]byte(response), clientAddr)
 			if err != nil {
-				fmt.Printf("Error sending response to %s: %v\n", clientAddr, err)
+				log.Printf("Error sending response to %s: %v\n", clientAddr, err)
 			}
 
 		default:
@@ -752,7 +756,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			log.Printf("Received empty message from client %s", clientAddr)
 			continue
 		}
-		log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+		//log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
 		// Parse the command and handle each case
 		command := parts[0]
@@ -853,11 +857,6 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			if !exists {
 				// Connection doesn't exist, create a new one
 				var err error
-				fmt.Println("Routing Table:")
-				for key, value := range routingTable {
-					fmt.Printf("  Destination: %s, Next Hop: %s\n", key, value)
-				}
-				fmt.Printf("routingTable[popOfRoute]: %s\n", routingTable[popOfRoute])
 				streamConnIn, err = setupUDPConnection(routingTable[popOfRoute], 8000)
 				if err != nil {
 					log.Fatalf("Error setting up UDP connection to %s for content \"%s\": %v", routingTable[popOfRoute], popOfRoute, err)
@@ -890,6 +889,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				log.Printf("Error unmarshalling probing message: %v", err)
 				continue
 			}
+
 			//adds itself
 			lastNode := probing.Nodes[0]
 			newHop := lastNode.Metrics.Hops + 1
@@ -904,13 +904,20 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			}
 			probing.Nodes = append([]NodeMetrics{newNode}, probing.Nodes...)
 
-			fmt.Printf("Chegou pacote de Probing\n")
 			filteredNeighbors := node.filterNeighbors(&probing)
 
+			var neighborsList []string
 			for _, neighbor := range filteredNeighbors {
+				neighborsList = append(neighborsList, neighbor)
+
 				// Assuming you want to increment hop value by 1 for each new neighbor
 				node.sendProbing(protocolConn, neighbor, probing)
 			}
+			var names []string
+			for _, node := range probing.Nodes {
+				names = append(names, node.Name) // Collect all node names
+			}
+			log.Printf("Sending probing to neighbor:%s coming from:%s", neighborsList, names)
 
 		default:
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
@@ -1308,7 +1315,7 @@ func ExtractFirstElement(jsonData []byte) (string, []byte, error) {
 }
 func updateRoutingTable(routingTable map[string]string, valueToUpdate string, ipNextHop string) {
 	routingTable[valueToUpdate] = ipNextHop
-	fmt.Printf("Update Routing Table for: %s\n", valueToUpdate)
+	log.Printf("Update Routing Table for: %s\n", valueToUpdate)
 }
 
 func getNextInRouteAddr(nextInRouteIp string) (*net.UDPAddr, error) {
@@ -1352,6 +1359,7 @@ func main() {
 	ip := flag.String("ip", "0.0.0.0", "IP to open on for testing")
 	port := flag.Int("port", 8000, "UDP port to listen on")
 	nodeType := flag.String("type", "Node", "Node type (POP, Node, CS)")
+	log.SetFlags(log.Ltime)
 
 	flag.Parse()
 
