@@ -887,15 +887,11 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			contentName := parts[1]
 			popOfRoute := parts[2]
 
-			for i, addr := range clientsNode[contentName][popOfRoute] {
-				if addr.String() == clientAddr.String() {
-					// Remove clientAddr by slicing out the element
-					clientsNode[contentName][popOfRoute] = append(clientsNode[contentName][popOfRoute][:i], clientsNode[contentName][popOfRoute][i+1:]...)
-					break
-				}
-			}
+			delete(clientsNode[contentName], popOfRoute)
+
 			NumberWatching := len(clientsNode[contentName])
-			log.Printf("Cients watching %s: %d ", contentName, NumberWatching)
+
+			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
 
 			if NumberWatching < 1 {
 				// Do something else if count is 1 or less
