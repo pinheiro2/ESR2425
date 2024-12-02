@@ -524,7 +524,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			continue
 		}
 
-		log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+		// log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
 		// Parse the command and handle each case
 		command := parts[0]
