@@ -556,7 +556,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				log.Printf("ENDSTREAM_UP command from client %s is missing args", clientAddr)
 				continue
 			}
-			contentName := parts[1]
+			// contentName := parts[1]
 
 		case "ENDSTREAM":
 			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
