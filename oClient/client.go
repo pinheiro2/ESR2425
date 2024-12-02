@@ -67,6 +67,9 @@ func resetNodeMetrics(node *Node) {
 	node.SuccessCount = 0
 	node.TotalCount = 0
 	node.Score = 0
+	node.ResponseAverageDelay = 0
+	node.ResponseJitter = 0
+	node.ResponseSuccRate = 0
 }
 
 // calculateJitter calculates the jitter for a node's response times
@@ -126,47 +129,52 @@ func measureNodeResponse(node *Node, wg *sync.WaitGroup) {
 	parts := strings.Fields(perfReport)
 	if len(parts) != 4 {
 		log.Printf("PERFREPORT in the wrong format")
+
 	}
-	// Parse the averageDelay string to a float64 and convert to time.Duration
-	avgDelay, err := strconv.ParseFloat(parts[1], 64) // parts[0] = averageDelay
-	if err != nil {
-		log.Printf("Error parsing average delay: %v", err)
-		return
-	}
-	// Convert averageDelay (milliseconds) to time.Duration (nanoseconds)
-	node.ResponseAverageDelay = time.Duration(avgDelay)
 
-	// Parse the averageJitter string to a float64 and convert to time.Duration
-	avgJitter, err := strconv.ParseFloat(parts[2], 64) // parts[1] = averageJitter
-	if err != nil {
-		log.Printf("Error parsing average jitter: %v", err)
-		return
-	}
-	// Convert averageJitter (milliseconds) to time.Duration (nanoseconds)
-	node.ResponseJitter = time.Duration(avgJitter)
-
-	// Parse the successRate string to float64
-	successRate, err := strconv.ParseFloat(parts[3], 64) // parts[2] = successRate
-	if err != nil {
-		log.Printf("Error parsing success rate: %v", err)
-		return
-	}
-	// Store success rate as float64
-	node.ResponseSuccRate = successRate
-
-	node.TotalCount++
-
-	if err == nil {
-		node.SuccessCount++
-		node.ResponseTimes = append(node.ResponseTimes, duration)
-
-		// Calculate the average response time
-		totalDuration := time.Duration(0)
-		for _, d := range node.ResponseTimes {
-			totalDuration += d
+	if len(parts) == 4 {
+		// Parse the averageDelay string to a float64 and convert to time.Duration
+		avgDelay, err := strconv.ParseFloat(parts[1], 64) // parts[0] = averageDelay
+		if err != nil {
+			log.Printf("Error parsing average delay: %v", err)
+			return
 		}
-		node.AverageTime = totalDuration / time.Duration(len(node.ResponseTimes))
+		// Convert averageDelay (milliseconds) to time.Duration (nanoseconds)
+		node.ResponseAverageDelay = time.Duration(avgDelay)
+
+		// Parse the averageJitter string to a float64 and convert to time.Duration
+		avgJitter, err := strconv.ParseFloat(parts[2], 64) // parts[1] = averageJitter
+		if err != nil {
+			log.Printf("Error parsing average jitter: %v", err)
+			return
+		}
+		// Convert averageJitter (milliseconds) to time.Duration (nanoseconds)
+		node.ResponseJitter = time.Duration(avgJitter)
+
+		// Parse the successRate string to float64
+		successRate, err := strconv.ParseFloat(parts[3], 64) // parts[2] = successRate
+		if err != nil {
+			log.Printf("Error parsing success rate: %v", err)
+			return
+		}
+		// Store success rate as float64
+		node.ResponseSuccRate = successRate
+
+		node.TotalCount++
+
+		if err == nil {
+			node.SuccessCount++
+			node.ResponseTimes = append(node.ResponseTimes, duration)
+
+			// Calculate the average response time
+			totalDuration := time.Duration(0)
+			for _, d := range node.ResponseTimes {
+				totalDuration += d
+			}
+			node.AverageTime = totalDuration / time.Duration(len(node.ResponseTimes))
+		}
 	}
+
 }
 
 // testNodesMultipleTimes runs tests on nodes a given number of times.
@@ -274,7 +282,7 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	}
 
 	// // Send initial connection request
-	// _, err = conn.Write([]byte("CONNECT"))
+	// _, err = conn.Write([]byte("CONNECT"))eceiveAndDisplay
 	// if err != nil {
 	// 	conn.Close()
 	// 	return nil, fmt.Errorf("failed to send connection request: %w", err)
@@ -297,23 +305,33 @@ func startFFPlay() (io.WriteCloser, error) {
 	return ffplayIn, nil
 }
 
-func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser, done chan struct{}) {
+func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffplayIn io.WriteCloser, stop chan struct{}) {
 	packet := &rtp.Packet{}
 
 	for {
 		select {
-		case <-done:
-			log.Println("Stream has ended, closing client.")
+		case <-stop:
+			log.Println("Stopping packet reception.")
 			return
 		default:
+			// Lock the mutex and get the current connection
+			connMutex.Lock()
+			activeConn := *conn
+			connMutex.Unlock()
+
+			if activeConn == nil {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+
 			buf := make([]byte, 150000)
 
-			n, _, err := conn.ReadFrom(buf)
+			// Read from the current connection
+			n, _, err := activeConn.ReadFrom(buf)
 			if err != nil {
 				if isTimeoutError(err) {
 					log.Println("Stream ended due to timeout.")
-					close(done) // Notify other parts of the program
-					return
+					continue
 				}
 				log.Printf("Error reading from UDP: %v", err)
 				continue
@@ -327,14 +345,15 @@ func receiveAndDisplayRTPPackets(conn *net.UDPConn, ffplayIn io.WriteCloser, don
 			_, err = ffplayIn.Write(packet.Payload)
 			if err != nil {
 				log.Printf("Failed to write to ffplay: %v", err)
-				break
+				return
 			}
 
-			//fmt.Printf("Received RTP packet: Seq=%d, Timestamp=%d\n", packet.SequenceNumber, packet.Timestamp)
-			time.Sleep(time.Millisecond * 33) // Simulate 30 FPS playback
+			// Simulate 30 FPS playback
+			time.Sleep(time.Millisecond * 33)
 		}
 	}
 }
+
 func isTimeoutError(err error) bool {
 	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 		return true
@@ -384,45 +403,54 @@ func main() {
 	}
 
 	// Create a ticker that ticks every minute (60 seconds)
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	// Run the task every time the ticker ticks in a separate goroutine
+	// Best node switching logic in the ticker goroutine
 	go func() {
 		for range ticker.C {
-			// Call the function to test nodes and find the best one
+			// Test nodes and find the best one
 			testNodesMultipleTimes(nodes, testCount)
-			bestNode = findBestNode(nodes) // Update bestNode each time
+			bestNode = findBestNode(nodes)
 			fmt.Printf("Best node updated: %s\n", bestNode.Address)
 
-			// If the best node address has changed, update the stream request
+			// If the best node has changed, reinitialize the connection
 			if bestNode.Address != previousBestNodeAddr {
 				fmt.Printf("Best node changed, reinitializing stream request to: %s\n", bestNode.Address)
 
 				connMutex.Lock()
 
-				// Reinitialize the UDP connection and send a new content request to the new best node
-				conn, err := setupUDPConnection(bestNode.Address, bestNode.Port)
-				if err != nil {
-					log.Fatalf("Error setting up UDP connection: %v", err)
+				// Close the old connection if it exists
+				if conn != nil {
+					conn.Close()
 				}
-				defer conn.Close()
 
-				// Send the content request to the new best node
+				// Set up a new connection
+				newConn, err := setupUDPConnection(bestNode.Address, bestNode.Port)
+				if err != nil {
+					log.Printf("Error setting up new UDP connection: %v", err)
+					connMutex.Unlock()
+					continue
+				}
+
+				// Update the global connection and send the content request
+				conn = newConn
 				err = sendContentRequest(conn, *stream)
 				if err != nil {
-					log.Fatalf("Error sending content request: %v", err)
+					log.Printf("Error sending content request: %v", err)
 				}
+
+				// Unlock the mutex after updating the connection
+				connMutex.Unlock()
 
 				// Update the previous best node address
 				previousBestNodeAddr = bestNode.Address
-				connMutex.Unlock()
-
 			}
+
+			// Reset metrics for all nodes
 			for _, node := range nodes {
 				resetNodeMetrics(node)
 			}
-
 		}
 	}()
 
@@ -434,7 +462,7 @@ func main() {
 	defer conn.Close()
 
 	// Wait 2 seconds to request for testing purpose
-	time.Sleep(2 * time.Second)
+	//time.Sleep(2 * time.Second)
 
 	// Send the content name request
 	err = sendContentRequest(conn, *stream)
@@ -447,11 +475,11 @@ func main() {
 		log.Fatalf("Error starting ffplay: %v", err)
 	}
 	defer ffplayIn.Close()
-	// Use a channel to signal when the stream ends
+
 	done := make(chan struct{})
 
 	// Start receiving and displaying RTP packets
-	go receiveAndDisplayRTPPackets(conn, ffplayIn, done)
+	go receiveAndDisplayRTPPackets(&conn, &connMutex, ffplayIn, done)
 
 	// Wait for the stream to end or the ffplay process to exit
 	select {
