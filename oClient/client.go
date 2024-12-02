@@ -127,10 +127,6 @@ func measureNodeResponse(node *Node, wg *sync.WaitGroup) {
 
 	perfReport := string(buffer[:n])
 	parts := strings.Fields(perfReport)
-	if len(parts) != 4 {
-		log.Printf("PERFREPORT in the wrong format")
-
-	}
 
 	if len(parts) == 4 {
 		// Parse the averageDelay string to a float64 and convert to time.Duration
@@ -328,6 +324,8 @@ func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffpl
 
 			// Read from the current connection
 			n, _, err := activeConn.ReadFrom(buf)
+			log.Println("Read buffer %d.", n)
+
 			if err != nil {
 				if isTimeoutError(err) {
 					log.Println("Stream ended due to timeout.")
