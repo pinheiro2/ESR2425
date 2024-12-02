@@ -315,6 +315,7 @@ func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffpl
 		case <-timeoutChan: // Timeout after inactivity period
 			log.Println("No packets received within timeout period. Assuming stream ended.")
 			closeStream(ffplayIn, *conn)
+			close(done)
 			return
 		default:
 			// Lock the mutex and get the current connection
@@ -339,18 +340,12 @@ func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffpl
 				}
 				log.Printf("Error reading from UDP: %v", err)
 				closeStream(ffplayIn, activeConn)
+				close(done)
 				return
 			}
 
 			// Reset timeout channel to wait for the next timeout
 			timeoutChan = time.After(inactivityTimeout)
-
-			// Check for zero bytes read
-			if n == 0 {
-				log.Println("Zero bytes read, signaling done channel.")
-				close(done)
-				return
-			}
 
 			if err := packet.Unmarshal(buf[:n]); err != nil {
 				log.Printf("Failed to unmarshal RTP packet: %v", err)
