@@ -236,8 +236,8 @@ func (n *Node) calculateScore(jitterWeight, avgTimeWeight, successWeight float64
 // Function to find the best node based on their computed scores
 func findBestNode(nodes []*Node) *Node {
 	// Define weights for Jitter, Average Time, and Success Rate
-	jitterWeight := 0.4
-	avgTimeWeight := 0.3
+	jitterWeight := 0.5
+	avgTimeWeight := 0.2
 	successWeight := 0.3
 
 	var maxAvgTime, maxJitter time.Duration
