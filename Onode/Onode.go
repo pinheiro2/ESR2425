@@ -61,6 +61,7 @@ type PathMetrics struct {
 }
 
 var (
+	videos              map[string]string
 	clients             map[string][]net.Addr
 	clientsNode         map[string]map[string][]net.Addr
 	clientsMu           sync.Mutex // Mutex to protect the client list
@@ -120,20 +121,34 @@ func handleError(err error, errMsg string, args ...interface{}) bool {
 
 func prepareFFmpegCommands(videos map[string]string) (map[string]*exec.Cmd, error) {
 	ffmpegMap := make(map[string]*exec.Cmd)
+	var err error
 
 	for name, videoPath := range videos {
-		ffmpegCmd := exec.Command("ffmpeg",
-			"-stream_loop", "-1", // Loop the video infinitely
-			"-i", videoPath, // Input file
-			"-f", "image2pipe", // Output format for piping images
-			"-vcodec", "mjpeg", // Encode as JPEG
-			"-q:v", "2", // Quality (lower is better)
-			"pipe:1") // Output to stdout
+		// ffmpegCmd := exec.Command("ffmpeg",
+		// 	// "-stream_loop", "-1", // Loop the video infinitely
+		// 	"-i", videoPath, // Input file
+		// 	"-f", "image2pipe", // Output format for piping images
+		// 	"-vcodec", "mjpeg", // Encode as JPEG
+		// 	"-q:v", "2", // Quality (lower is better)
+		// 	"pipe:1") // Output to stdout
 
-		ffmpegMap[name] = ffmpegCmd
+		ffmpegMap[name], err = prepareFFmpegCommand(videoPath)
 	}
 
-	return ffmpegMap, nil
+	return ffmpegMap, err
+}
+
+// Function to create an FFmpeg command for a single video
+func prepareFFmpegCommand(videoPath string) (*exec.Cmd, error) {
+	ffmpegCmd := exec.Command("ffmpeg",
+		// "-stream_loop", "-1", // Loop the video infinitely
+		"-i", videoPath, // Input file
+		"-f", "image2pipe", // Output format for piping images
+		"-vcodec", "mjpeg", // Encode as JPEG
+		"-q:v", "2", // Quality (lower is better)
+		"pipe:1") // Output to stdout
+
+	return ffmpegCmd, nil
 }
 
 // Starts ffmpeg to output video frames as JPEGs for Content Server
@@ -818,7 +833,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				log.Printf("New connection established for content \"%s\"", popOfRoute)
 
 				// Forward the stream to the client
-				go forwardToClientsNode(protocolConn, streamConnIn, popOfRoute, clientsNode[contentName])
+				go forwardToClientsNode(protocolConn, streamConnIn, clientsNode[contentName])
 			} else {
 				log.Printf("Reusing existing connection for POP \"%s\"", popOfRoute)
 			}
@@ -961,32 +976,26 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 				log.Printf("LIST OF CLIENTS: %s", clients[contentName])
 
-				go sendRTPPackets(conn, reader, contentName, clients)
-
 				// Send RTP packets and handle errors
-				// TODO: lidar com fim de uma stream e remeco da mesma
-				// go func() {
-				// 	err := sendRTPPackets(conn, streams[contentName], contentName)
-				// 	if err != nil {
-				// 		log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
+				go func() {
+					err := sendRTPPackets(conn, reader, contentName, clients)
+					if err != nil {
+						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
-				// 		// Restart the stream if it has ended
-				// 		if err.Error() == "end of stream reached" {
-				// 			log.Printf("Restarting stream for content \"%s\"", contentName)
+						// Catch if stream has ended
+						if err.Error() == "end of stream reached" {
 
-				// 			reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
-				// 			if err != nil {
-				// 				log.Fatalf("Error restarting ffmpeg for content \"%s\": %v", contentName, err)
-				// 			}
+							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
+							if err != nil {
+								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
+							}
 
-				// 			streams[contentName] = reader
-				// 			defer cleanup()
+							streams[contentName] = nil
+							defer cleanup()
 
-				// 			// Restart sending RTP packets
-				// 			sendRTPPackets(conn, reader, contentName)
-				// 		}
-				// 	}
-				// }()
+						}
+					}
+				}()
 			}
 
 		default:
@@ -1056,8 +1065,8 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 				log.Printf("Failed to send packet to %v: %v", client, err)
 			} else {
 				// Log packet details after successful send
-				log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-					client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+				// log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+				// 	client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
 			}
 		}
 		clientsMu.Unlock() // Unlock the client list
@@ -1084,8 +1093,8 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	return conn, nil
 }
 
-// Forwards data from content server to connected clients (used by POP)
-func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, popOfRoute string, clients map[string][]net.Addr) {
+// Forwards data from Node to connected nodes
+func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, clients map[string][]net.Addr) {
 	buf := make([]byte, 150000)
 	for {
 		n, _, err := contentConn.ReadFromUDP(buf)
@@ -1104,7 +1113,7 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, popOfRout
 					log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
 				} else {
 					// Uncomment the next line for debugging purposes
-					log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
+					// log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
 				}
 			}
 		}
@@ -1112,7 +1121,7 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, popOfRout
 	}
 }
 
-// Forwards data from content server to connected clients (used by POP)
+// Forwards data from POP to connected clients
 func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn, popOfRoute string, clients map[string][]net.Addr) {
 	buf := make([]byte, 150000)
 	for {
@@ -1276,7 +1285,7 @@ func main() {
 	case "CS":
 		// Content Server: Stream video frames to any connecting POP nodes
 
-		videos := make(map[string]string)
+		videos = make(map[string]string)
 		streams := make(map[string]*bufio.Reader)
 		LoadJSONToMap("streams.json", videos)
 
