@@ -1256,6 +1256,8 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				}
 			}
 
+			log.Printf("Clients list: %s ", clients[contentName])
+
 			NumberWatching := len(clients[contentName])
 			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
 
