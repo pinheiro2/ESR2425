@@ -332,7 +332,7 @@ func findBestPath(metrics map[string]PathMetrics) (string, PathMetrics) {
 	return bestKey, bestMetrics
 }
 
-func calculateBestPath(probingState *ProbingState) (string, PathMetrics) {
+func calculateBestPath(probingState *ProbingState, oldPath string) (string, PathMetrics) {
 	result := make(map[string]PathMetrics)
 
 	var maxDelay float64 = 0  // Track the maximum delay
@@ -410,6 +410,17 @@ func calculateBestPath(probingState *ProbingState) (string, PathMetrics) {
 
 	key, metric := findBestPath(scores)
 
+	fmt.Printf("NEW best:%s Score:%f\n", key, metric.Score)
+
+	if oldPath != "" {
+		if metric.Score-scores[oldPath].Score < 0.1 {
+			key = oldPath
+			metric = scores[oldPath]
+			fmt.Printf("OLD best:%s Score:%f\n", key, metric.Score)
+
+		}
+	}
+
 	return key, metric
 }
 
@@ -455,6 +466,9 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 	expectedID := 0
 
 	firstProbing := true
+
+	clientsAlive := make(map[string]time.Time) // Map to store alive timestamps
+	var clientsAliveMu sync.Mutex              // Mutex for thread-safe access
 
 	var bestPath string
 	var bestMetric PathMetrics
@@ -629,58 +643,52 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				probingState.Timer = time.AfterFunc(3*time.Second, func() {
 					//ensures that it does not have problems in the first run
 					if len(probingState.ProbingMap) > 0 {
-						newbestPath, newbestMetric := calculateBestPath(probingState) // Calculate the best path
+						newbestPath, newbestMetric := calculateBestPath(probingState, bestPath) // Calculate the best path
 						log.Printf("Received %d paths with the best path being: %s Score:%f\n", len(probingState.ProbingMap), newbestPath, newbestMetric.Score)
 
 						//best path changed
 						if newbestPath != bestPath {
-							if bestPath != "" {
-								//send wtv it is to client to make it end stream and to request it again
-								log.Printf("Best Path changed from: %s to: %s\n", bestPath, newbestPath)
-								//fmt.Printf("Metrics changed from: %v to: %v\n", bestMetric, newbestMetric)
+
+							bestPath = newbestPath
+							bestMetric = newbestMetric
+
+							elements := strings.Split(newbestPath, ",")
+
+							// Marshal the slice into JSON
+							best, err := json.Marshal(elements)
+							if err != nil {
+								fmt.Printf("Error marshalling JSON: %v\n", err)
+								return
 							}
-						}
-						bestPath = newbestPath
-						bestMetric = newbestMetric
 
-						//print temporatio
+							popOfRoute, jsonUpdate, err := ExtractFirstElement(best)
+							if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
+								return
+							}
 
-						elements := strings.Split(newbestPath, ",")
+							//fmt.Printf("POP: %s\n", popOfRoute)
 
-						// Marshal the slice into JSON
-						best, err := json.Marshal(elements)
-						if err != nil {
-							fmt.Printf("Error marshalling JSON: %v\n", err)
-							return
-						}
+							first, restJSON, err := ExtractFirstElement(jsonUpdate)
+							if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
+								return
+							}
 
-						popOfRoute, jsonUpdate, err := ExtractFirstElement(best)
-						if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
-							return
-						}
+							//fmt.Printf("First: %s\n", first)
+							//fmt.Printf("Rest: %s\n", restJSON)
 
-						//fmt.Printf("POP: %s\n", popOfRoute)
+							nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
+							if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
+								return
+							}
 
-						first, restJSON, err := ExtractFirstElement(jsonUpdate)
-						if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
-							return
-						}
+							updateRoutingTable(routingTable, "stream1", node.Neighbors[first])
+							updateRoutingTable(routingTable, "stream2", node.Neighbors[first])
+							updateRoutingTable(routingTable, "stream3", node.Neighbors[first])
 
-						//fmt.Printf("First: %s\n", first)
-						//fmt.Printf("Rest: %s\n", restJSON)
-
-						nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
-						if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
-							return
-						}
-
-						updateRoutingTable(routingTable, "stream1", node.Neighbors[first])
-						updateRoutingTable(routingTable, "stream2", node.Neighbors[first])
-						updateRoutingTable(routingTable, "stream3", node.Neighbors[first])
-
-						err = sendUpdatePacket(protocolConn, popOfRoute, restJSON, nextInRouteIp)
-						if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
-							return
+							err = sendUpdatePacket(protocolConn, popOfRoute, restJSON, nextInRouteIp)
+							if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
+								return
+							}
 						}
 
 						probingState.ProbingMap = make(map[string][]Probing) // Reset map
@@ -722,6 +730,29 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			if err != nil {
 				log.Printf("Error sending response to %s: %v\n", clientAddr, err)
 			}
+
+		case "ALIVE":
+			clientAddrStr := clientAddr.String()
+
+			clientsAliveMu.Lock()
+			clientsAlive[clientAddrStr] = time.Now()
+			clientsAliveMu.Unlock()
+
+			log.Printf("Updated ALIVE timestamp for client: %s", clientAddrStr)
+
+			// Start a goroutine for cleanup specific to this client
+			go func(addr string) {
+				time.Sleep(15 * time.Second) // Wait 15 seconds
+				now := time.Now()
+
+				clientsAliveMu.Lock()
+				lastTimestamp, exists := clientsAlive[addr]
+				if exists && now.Sub(lastTimestamp) > 15*time.Second {
+					log.Printf("The client: %s is no longer alive\n", clientAddrStr)
+					delete(clientsAlive, addr)
+				}
+				clientsAliveMu.Unlock()
+			}(clientAddrStr)
 
 		default:
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
