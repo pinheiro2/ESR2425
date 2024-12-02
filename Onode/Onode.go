@@ -1183,7 +1183,7 @@ func sendEndStream(conn *net.UDPConn, udpAddr *net.UDPAddr, contentName string, 
 	return nil
 }
 
-func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
+func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
 
 	// Cria um ticker para executar initializeProbing a cada 30 segundos
 	ticker := time.NewTicker(30 * time.Second)
@@ -1193,13 +1193,13 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 	probeID := 0
 
 	// Executa a primeira chamada imediatamente
-	node.initializeProbing(conn, 3, probeID)
+	node.initializeProbing(protocolConn, 3, probeID)
 	probeID++ // Incrementa o ID após a primeira chamada
 
 	// Goroutine para executar initializeProbing periodicamente
 	go func() {
 		for range ticker.C {
-			node.initializeProbing(conn, 3, probeID)
+			node.initializeProbing(protocolConn, 3, probeID)
 			probeID++ // Incrementa o ID após cada chamada
 		}
 	}()
@@ -1209,7 +1209,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 	buf := make([]byte, 1024)
 	for {
-		n, clientAddr, err := conn.ReadFrom(buf)
+		n, clientAddr, err := protocolConn.ReadFrom(buf)
 		if err != nil || n == 0 {
 			log.Printf("Error reading client connection request: %v", err)
 			continue
@@ -1230,6 +1230,25 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 		command := parts[0]
 
 		switch command {
+		case "ENDSTREAM_UP":
+			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+
+			if len(parts) < 2 {
+				log.Printf("ENDSTREAM_UP command from client %s is missing args", clientAddr)
+				continue
+			}
+
+			contentName := parts[1]
+			// popOfRoute := parts[2]
+
+			for i, addr := range clients[contentName] {
+				if addr.String() == clientAddr.String() {
+					// Remove clientAddr by slicing out the element
+					clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
+					break
+				}
+			}
+
 		case "UPDATE":
 			if len(parts) < 3 {
 				log.Printf("UPDATE command from client %s is missing data", clientAddr)
@@ -1257,8 +1276,6 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 			popOfRoute := parts[2]
 			clientName := parts[3]
 
-			// TODO: change routing to node name
-
 			log.Printf("REQUEST for content \"%s\" from POP %s from client %s", contentName, popOfRoute, node.Neighbors[clientName])
 
 			addClientName(contentName, clientName, clientsName, &clientsMu, *node)
@@ -1276,7 +1293,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 				// Send RTP packets and handle errors
 				go func() {
-					err := sendRTPPackets(conn, reader, contentName, clients)
+					err := sendRTPPackets(protocolConn, reader, contentName, clients)
 					if err != nil {
 						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
@@ -1284,7 +1301,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 						if err.Error() == "end of stream reached" {
 
 							log.Printf("LIST OF CLIENTS: %v", clientsName[contentName])
-							sendEndStreamClientsCS(conn, contentName, popOfRoute, clientsName)
+							sendEndStreamClientsCS(protocolConn, contentName, popOfRoute, clientsName)
 							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
 							if err != nil {
 								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
