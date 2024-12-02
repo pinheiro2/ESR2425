@@ -894,8 +894,10 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
 
 			if NumberWatching < 1 {
+
 				// Do something else if count is 1 or less
 				nextInRouteIp, _ := getNextInRouteAddr(routingTable[contentName])
+				log.Printf("ENDSTREAM_UP content: %s sent to %v\n", contentName, nextInRouteIp)
 
 				sendEndStreamUp(protocolConn, nextInRouteIp, contentName, popOfRoute)
 
