@@ -1272,6 +1272,8 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 				delete(streams, contentName)
 
+				log.Printf("Stream reader is: ", streams[contentName])
+
 			}
 
 		case "UPDATE":
