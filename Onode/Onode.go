@@ -820,6 +820,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 			// Stops sending
 			clientsMu.Lock()
+			delete(clientsName, contentName) // Removes contentName from map and releases memory
 			delete(clientsNode, contentName) // Removes contentName from map and releases memory
 			clientsMu.Unlock()
 
