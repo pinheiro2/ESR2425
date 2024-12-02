@@ -236,8 +236,8 @@ func (n *Node) calculateScore(jitterWeight, avgTimeWeight, successWeight float64
 // Function to find the best node based on their computed scores
 func findBestNode(nodes []*Node) *Node {
 	// Define weights for Jitter, Average Time, and Success Rate
-	jitterWeight := 0.4
-	avgTimeWeight := 0.3
+	jitterWeight := 0.5
+	avgTimeWeight := 0.2
 	successWeight := 0.3
 
 	var maxAvgTime, maxJitter time.Duration
@@ -261,9 +261,7 @@ func findBestNode(nodes []*Node) *Node {
 	})
 
 	for _, node := range nodes {
-		fmt.Printf("Adress:%s, Succes:%d, AverageTime:%v, Jitter:%v, Score:%f\n", node.Address, node.SuccessCount, node.AverageTime, node.Jitter, node.Score)
-
-		fmt.Printf("Adress:%s, Succes:%d, AverageTime:%v, Jitter:%v, Score:%f\n", node.Address, node.SuccessCount, node.AverageTime+node.ResponseAverageDelay, node.Jitter+node.ResponseJitter, node.Score)
+		fmt.Printf("Adress:%s, Score:%f\n", node.Address, node.Score)
 	}
 
 	// Return the node with the highest score
@@ -374,6 +372,22 @@ func sendContentRequest(conn *net.UDPConn, contentName string) error {
 	return nil
 }
 
+// sendAliveMessage sends an ALIVE message to the current best node using the provided UDP connection.
+func sendAliveMessage(conn *net.UDPConn) {
+	if conn == nil {
+		log.Println("No active connection to send ALIVE message.")
+		return
+	}
+
+	aliveMessage := "ALIVE"
+	_, err := conn.Write([]byte(aliveMessage))
+	if err != nil {
+		log.Printf("Error sending ALIVE message: %v", err)
+	} else {
+		log.Println("ALIVE message sent successfully.")
+	}
+}
+
 func main() {
 	// Define the port flag and parse the command-line arguments
 	stream := flag.String("stream", "stream1", "stream to connect to")
@@ -416,36 +430,48 @@ func main() {
 
 			// If the best node has changed, reinitialize the connection
 			if bestNode.Address != previousBestNodeAddr {
-				fmt.Printf("Best node changed, reinitializing stream request to: %s\n", bestNode.Address)
 
-				connMutex.Lock()
+				for _, node := range nodes {
+					if node.Address == previousBestNodeAddr {
 
-				// Close the old connection if it exists
-				if conn != nil {
-					conn.Close()
+						if bestNode.Score-node.Score > 0.1 {
+							fmt.Printf("Best node changed, reinitializing stream request to: %s\n", bestNode.Address)
+
+							connMutex.Lock()
+
+							// Close the old connection if it exists
+							if conn != nil {
+								conn.Close()
+							}
+
+							// Set up a new connection
+							newConn, err := setupUDPConnection(bestNode.Address, bestNode.Port)
+							if err != nil {
+								log.Printf("Error setting up new UDP connection: %v", err)
+								connMutex.Unlock()
+								continue
+							}
+
+							// Update the global connection and send the content request
+							conn = newConn
+							err = sendContentRequest(conn, *stream)
+							if err != nil {
+								log.Printf("Error sending content request: %v", err)
+							}
+
+							// Unlock the mutex after updating the connection
+							connMutex.Unlock()
+
+							// Update the previous best node address
+							previousBestNodeAddr = bestNode.Address
+
+						}
+					}
 				}
 
-				// Set up a new connection
-				newConn, err := setupUDPConnection(bestNode.Address, bestNode.Port)
-				if err != nil {
-					log.Printf("Error setting up new UDP connection: %v", err)
-					connMutex.Unlock()
-					continue
-				}
-
-				// Update the global connection and send the content request
-				conn = newConn
-				err = sendContentRequest(conn, *stream)
-				if err != nil {
-					log.Printf("Error sending content request: %v", err)
-				}
-
-				// Unlock the mutex after updating the connection
-				connMutex.Unlock()
-
-				// Update the previous best node address
-				previousBestNodeAddr = bestNode.Address
 			}
+
+			sendAliveMessage(conn)
 
 			// Reset metrics for all nodes
 			for _, node := range nodes {
@@ -460,6 +486,8 @@ func main() {
 		log.Fatalf("Error setting up UDP connection: %v", err)
 	}
 	defer conn.Close()
+
+	sendAliveMessage(conn)
 
 	// Wait 2 seconds to request for testing purpose
 	//time.Sleep(2 * time.Second)

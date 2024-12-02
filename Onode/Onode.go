@@ -108,7 +108,7 @@ func (node *Node) initialize(bootstrapAddress string) {
 	}
 
 	node.Neighbors = neighbors
-	fmt.Printf("Node %s (Type: %s) - Stored neighbors: %v\n", node.Name, node.Type, node.Neighbors)
+	log.Printf("Node %s (Type: %s) - Stored neighbors: %v\n", node.Name, node.Type, node.Neighbors)
 }
 
 func handleError(err error, errMsg string, args ...interface{}) bool {
@@ -208,17 +208,23 @@ func (n *Node) initializeProbing(protocolConn *net.UDPConn, totalcount int, id i
 			},
 		},
 	}
+	var neighborsList []string
 
 	// Send the probing to all neighbors totalcount times
 	for i := 0; i < totalcount; i++ {
 		for neighbor := range n.Neighbors {
+			if i == 0 {
+				neighborsList = append(neighborsList, neighbor)
+			}
 
 			err := n.sendProbing(protocolConn, neighbor, probing)
 			if err != nil {
 				log.Printf("Error sending probing to %s: %v", neighbor, err)
 			}
 		}
+		log.Printf("Sending probing to neighbor:%s from node %s", neighborsList, n.Name)
 	}
+
 }
 
 func (n *Node) sendProbing(protocolConn *net.UDPConn, neighborName string, probing Probing) error {
@@ -240,8 +246,6 @@ func (n *Node) sendProbing(protocolConn *net.UDPConn, neighborName string, probi
 
 	neighborWithPort := fmt.Sprintf("%s:%d", neighborAddr, 8000)
 
-	fmt.Printf("%s\n", neighborWithPort)
-
 	// Create the UDP address for the neighbor
 	addr, err := net.ResolveUDPAddr("udp", neighborWithPort)
 	if err != nil {
@@ -250,6 +254,7 @@ func (n *Node) sendProbing(protocolConn *net.UDPConn, neighborName string, probi
 
 	finalMessage := append([]byte("PROBING "), probingData...)
 	// Send the probing data to the neighbor
+	//log.Printf("Sending probing to neighbor: %s from node: %s", neighborName, n.Name)
 	// log.Printf("Sending probing to neighbor: %s from node: %s", neighborName, n.Name)
 	_, err = protocolConn.WriteTo(finalMessage, addr)
 	if err != nil {
@@ -281,8 +286,8 @@ func (node *Node) filterNeighbors(probing *Probing) []string {
 func calculateScores(metrics map[string]PathMetrics, maxAvgTime, maxJitter float64) map[string]PathMetrics {
 	// Define weights for jitter, average delay, and success rate
 	const (
-		jitterWeight  = 0.4
-		avgTimeWeight = 0.3
+		jitterWeight  = 0.5
+		avgTimeWeight = 0.2
 		successWeight = 0.3
 	)
 
@@ -306,7 +311,7 @@ func calculateScores(metrics map[string]PathMetrics, maxAvgTime, maxJitter float
 
 		metrics[key] = metric
 
-		fmt.Printf("Path: %s \nDelay:%f Jitter:%f Score: %f\n", key, metric.AverageDelay, metric.AverageJitter, metric.Score)
+		//fmt.Printf("Path: %s Score: %f\n", key, metric.Score)
 	}
 
 	return metrics
@@ -329,7 +334,7 @@ func findBestPath(metrics map[string]PathMetrics) (string, PathMetrics) {
 	return bestKey, bestMetrics
 }
 
-func calculateBestPath(probingState *ProbingState) (string, PathMetrics) {
+func calculateBestPath(probingState *ProbingState, oldPath string) (string, PathMetrics) {
 	result := make(map[string]PathMetrics)
 
 	var maxDelay float64 = 0  // Track the maximum delay
@@ -406,6 +411,17 @@ func calculateBestPath(probingState *ProbingState) (string, PathMetrics) {
 	scores := calculateScores(result, maxDelay, maxJitter)
 
 	key, metric := findBestPath(scores)
+
+	fmt.Printf("NEW best:%s Score:%f\n", key, metric.Score)
+
+	if oldPath != "" {
+		if metric.Score-scores[oldPath].Score < 0.1 {
+			key = oldPath
+			metric = scores[oldPath]
+			fmt.Printf("OLD best:%s Score:%f\n", key, metric.Score)
+
+		}
+	}
 
 	return key, metric
 }
@@ -494,6 +510,9 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 	firstProbing := true
 
+	clientsAlive := make(map[string]time.Time) // Map to store alive timestamps
+	var clientsAliveMu sync.Mutex              // Mutex for thread-safe access
+
 	var bestPath string
 	var bestMetric PathMetrics
 
@@ -524,7 +543,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			continue
 		}
 
-		// log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+		//log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
 		// Parse the command and handle each case
 		command := parts[0]
@@ -668,58 +687,52 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				probingState.Timer = time.AfterFunc(3*time.Second, func() {
 					//ensures that it does not have problems in the first run
 					if len(probingState.ProbingMap) > 0 {
-						newbestPath, newbestMetric := calculateBestPath(probingState) // Calculate the best path
-						fmt.Printf("Best Path: %s	Metrics:%v\n", newbestPath, newbestMetric)
+						newbestPath, newbestMetric := calculateBestPath(probingState, bestPath) // Calculate the best path
+						log.Printf("Received %d paths with the best path being: %s Score:%f\n", len(probingState.ProbingMap), newbestPath, newbestMetric.Score)
 
 						//best path changed
 						if newbestPath != bestPath {
-							if bestPath != "" {
-								//send wtv it is to client to make it end stream and to request it again
-								fmt.Printf("Best Path changed from: %s to: %s\n", bestPath, newbestPath)
-								fmt.Printf("Metrics changed from: %v to: %v\n", bestMetric, newbestMetric)
+
+							bestPath = newbestPath
+							bestMetric = newbestMetric
+
+							elements := strings.Split(newbestPath, ",")
+
+							// Marshal the slice into JSON
+							best, err := json.Marshal(elements)
+							if err != nil {
+								fmt.Printf("Error marshalling JSON: %v\n", err)
+								return
 							}
-						}
-						bestPath = newbestPath
-						bestMetric = newbestMetric
 
-						//print temporatio
+							popOfRoute, jsonUpdate, err := ExtractFirstElement(best)
+							if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
+								return
+							}
 
-						elements := strings.Split(newbestPath, ",")
+							//fmt.Printf("POP: %s\n", popOfRoute)
 
-						// Marshal the slice into JSON
-						best, err := json.Marshal(elements)
-						if err != nil {
-							fmt.Printf("Error marshalling JSON: %v\n", err)
-							return
-						}
+							first, restJSON, err := ExtractFirstElement(jsonUpdate)
+							if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
+								return
+							}
 
-						popOfRoute, jsonUpdate, err := ExtractFirstElement(best)
-						if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
-							return
-						}
+							//fmt.Printf("First: %s\n", first)
+							//fmt.Printf("Rest: %s\n", restJSON)
 
-						//fmt.Printf("POP: %s\n", popOfRoute)
+							nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
+							if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
+								return
+							}
 
-						first, restJSON, err := ExtractFirstElement(jsonUpdate)
-						if handleError(err, "Failed to extract first element from JSON update: %s", string(jsonUpdate)) {
-							return
-						}
+							updateRoutingTable(routingTable, "stream1", node.Neighbors[first])
+							updateRoutingTable(routingTable, "stream2", node.Neighbors[first])
+							updateRoutingTable(routingTable, "stream3", node.Neighbors[first])
 
-						//fmt.Printf("First: %s\n", first)
-						//fmt.Printf("Rest: %s\n", restJSON)
-
-						nextInRouteIp, err := getNextInRouteAddr(node.Neighbors[first])
-						if handleError(err, "Failed to resolve next-in-route IP for neighbor: %s", first) {
-							return
-						}
-
-						updateRoutingTable(routingTable, "stream1", node.Neighbors[first])
-						updateRoutingTable(routingTable, "stream2", node.Neighbors[first])
-						updateRoutingTable(routingTable, "stream3", node.Neighbors[first])
-
-						err = sendUpdatePacket(protocolConn, popOfRoute, restJSON, nextInRouteIp)
-						if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
-							return
+							err = sendUpdatePacket(protocolConn, popOfRoute, restJSON, nextInRouteIp)
+							if handleError(err, "Failed to send update packet to %s", nextInRouteIp) {
+								return
+							}
 						}
 
 						probingState.ProbingMap = make(map[string][]Probing) // Reset map
@@ -759,8 +772,31 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			response := fmt.Sprintf("PERFREPORT %f %f %f", bestMetric.AverageDelay, bestMetric.AverageJitter, bestMetric.SuccessRate)
 			_, err = protocolConn.WriteTo([]byte(response), clientAddr)
 			if err != nil {
-				fmt.Printf("Error sending response to %s: %v\n", clientAddr, err)
+				log.Printf("Error sending response to %s: %v\n", clientAddr, err)
 			}
+
+		case "ALIVE":
+			clientAddrStr := clientAddr.String()
+
+			clientsAliveMu.Lock()
+			clientsAlive[clientAddrStr] = time.Now()
+			clientsAliveMu.Unlock()
+
+			log.Printf("Updated ALIVE timestamp for client: %s", clientAddrStr)
+
+			// Start a goroutine for cleanup specific to this client
+			go func(addr string) {
+				time.Sleep(15 * time.Second) // Wait 15 seconds
+				now := time.Now()
+
+				clientsAliveMu.Lock()
+				lastTimestamp, exists := clientsAlive[addr]
+				if exists && now.Sub(lastTimestamp) > 15*time.Second {
+					log.Printf("The client: %s is no longer alive\n", clientAddrStr)
+					delete(clientsAlive, addr)
+				}
+				clientsAliveMu.Unlock()
+			}(clientAddrStr)
 
 		default:
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
@@ -796,7 +832,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			log.Printf("Received empty message from client %s", clientAddr)
 			continue
 		}
-		log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+		//log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
 		// Parse the command and handle each case
 		command := parts[0]
@@ -907,11 +943,6 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			if !exists {
 				// Connection doesn't exist, create a new one
 				var err error
-				fmt.Println("Routing Table:")
-				for key, value := range routingTable {
-					fmt.Printf("  Destination: %s, Next Hop: %s\n", key, value)
-				}
-				fmt.Printf("routingTable[popOfRoute]: %s\n", routingTable[popOfRoute])
 				streamConnIn, err = setupUDPConnection(routingTable[popOfRoute], 8000)
 				if err != nil {
 					log.Fatalf("Error setting up UDP connection to %s for content \"%s\": %v", routingTable[popOfRoute], popOfRoute, err)
@@ -944,6 +975,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				log.Printf("Error unmarshalling probing message: %v", err)
 				continue
 			}
+
 			//adds itself
 			lastNode := probing.Nodes[0]
 			newHop := lastNode.Metrics.Hops + 1
@@ -958,13 +990,20 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			}
 			probing.Nodes = append([]NodeMetrics{newNode}, probing.Nodes...)
 
-			fmt.Printf("Chegou pacote de Probing\n")
 			filteredNeighbors := node.filterNeighbors(&probing)
 
+			var neighborsList []string
 			for _, neighbor := range filteredNeighbors {
+				neighborsList = append(neighborsList, neighbor)
+
 				// Assuming you want to increment hop value by 1 for each new neighbor
 				node.sendProbing(protocolConn, neighbor, probing)
 			}
+			var names []string
+			for _, node := range probing.Nodes {
+				names = append(names, node.Name) // Collect all node names
+			}
+			log.Printf("Sending probing to neighbor:%s coming from:%s", neighborsList, names)
 
 		default:
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
@@ -1360,7 +1399,7 @@ func ExtractFirstElement(jsonData []byte) (string, []byte, error) {
 }
 func updateRoutingTable(routingTable map[string]string, valueToUpdate string, ipNextHop string) {
 	routingTable[valueToUpdate] = ipNextHop
-	fmt.Printf("Update Routing Table for: %s\n", valueToUpdate)
+	log.Printf("Update Routing Table for: %s\n", valueToUpdate)
 }
 
 func getNextInRouteAddr(nextInRouteIp string) (*net.UDPAddr, error) {
@@ -1404,6 +1443,7 @@ func main() {
 	ip := flag.String("ip", "0.0.0.0", "IP to open on for testing")
 	port := flag.Int("port", 8000, "UDP port to listen on")
 	nodeType := flag.String("type", "Node", "Node type (POP, Node, CS)")
+	log.SetFlags(log.Ltime)
 
 	flag.Parse()
 
