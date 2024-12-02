@@ -802,7 +802,6 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				clientsAliveMu.Lock()
 				lastTimestamp, exists := clientsAlive[addr]
 				if exists && now.Sub(lastTimestamp) > 15*time.Second {
-					log.Printf("The client: %s is no longer alive\n", clientAddrStr)
 
 					delete(clientsAlive, addr)
 
@@ -824,23 +823,25 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 					NumberWatching := len(clients[contentName])
 
-					if NumberWatching > 1 {
-						log.Printf("Clients watching: %d\n", NumberWatching)
-
-						// Find and remove clientAddr from clients[contentName]
-						for i, addr := range clients[contentName] {
-							if addr.String() == clientAddr.String() {
-								// Remove clientAddr by slicing out the element
-								clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
-								break
-							}
+					for i, addr := range clients[contentName] {
+						if addr.String() == clientAddr.String() {
+							// Remove clientAddr by slicing out the element
+							clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
+							break
 						}
-					} else {
+					}
+
+					if NumberWatching < 1 {
 						// Do something else if count is 1 or less
-						fmt.Println("One or no entries exist for", contentName)
+						nextInRouteIp, _ := getNextInRouteAddr(routingTable[contentName])
+
+						sendEndStreamUp(protocolConn, nextInRouteIp, contentName, node.Name)
+
 					}
 
 				}
+				log.Printf("The client: %s is no longer alive\n", clientAddrStr)
+
 				clientsAliveMu.Unlock()
 			}(clientAddrStr)
 
@@ -1055,6 +1056,31 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
 		}
 	}
+}
+
+func sendEndStreamUp(conn *net.UDPConn, udpAddr *net.UDPAddr, contentName string, popOfRoute string) error {
+	if udpAddr == nil {
+		return fmt.Errorf("client address is nil; cannot send ENDSTREAM_UP for content: %s", contentName)
+	}
+
+	// Create a new UDP address with the same IP but port 8000
+	targetAddr := &net.UDPAddr{
+		IP:   udpAddr.IP,   // Keep the same IP address
+		Port: 8000,         // Set the port to 8000
+		Zone: udpAddr.Zone, // Keep the same zone (if any)
+	}
+
+	// Prefix the content name with "ENDSTREAM:"
+	message := "ENDSTREAM_UP " + contentName + " " + popOfRoute
+
+	// Send the request message to the modified target address (port 8000)
+	_, err := conn.WriteToUDP([]byte(message), targetAddr)
+	if err != nil {
+		return fmt.Errorf("failed to send content name: %w", err)
+	}
+
+	log.Printf("ENDSTREAM_UP content: %s sent to %v\n", contentName, targetAddr)
+	return nil
 }
 
 func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string, nodeName string) error {
