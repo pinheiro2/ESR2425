@@ -304,10 +304,17 @@ func startFFPlay() (io.WriteCloser, error) {
 func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffplayIn io.WriteCloser, stop chan struct{}, done chan struct{}) {
 	packet := &rtp.Packet{}
 
+	inactivityTimeout := 3 * time.Second         // Set timeout duration for inactivity
+	timeoutChan := time.After(inactivityTimeout) // Channel that triggers after the inactivity timeout
+
 	for {
 		select {
 		case <-stop:
 			log.Println("Stopping packet reception.")
+			return
+		case <-timeoutChan: // Timeout after inactivity period
+			log.Println("No packets received within timeout period. Assuming stream ended.")
+			closeStream(ffplayIn, *conn)
 			return
 		default:
 			// Lock the mutex and get the current connection
@@ -322,18 +329,21 @@ func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffpl
 
 			buf := make([]byte, 150000)
 
-			// Read from the current connection
-			n, _, err := activeConn.ReadFrom(buf)
-			log.Printf("Read buffer %d.", n)
+			activeConn.SetReadDeadline(time.Now().Add(inactivityTimeout)) // Set a timeout
 
+			n, _, err := activeConn.ReadFrom(buf)
 			if err != nil {
 				if isTimeoutError(err) {
 					log.Println("Stream ended due to timeout.")
-					continue
+					continue // Timeout error, just retry reading
 				}
 				log.Printf("Error reading from UDP: %v", err)
-				continue
+				closeStream(ffplayIn, activeConn)
+				return
 			}
+
+			// Reset timeout channel to wait for the next timeout
+			timeoutChan = time.After(inactivityTimeout)
 
 			// Check for zero bytes read
 			if n == 0 {
@@ -357,6 +367,13 @@ func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffpl
 			time.Sleep(time.Millisecond * 33)
 		}
 	}
+}
+
+// Helper function to close the stream and connection
+func closeStream(ffplayIn io.WriteCloser, conn *net.UDPConn) {
+	log.Println("Closing stream and connection.")
+	ffplayIn.Close()
+	conn.Close()
 }
 
 func isTimeoutError(err error) bool {
