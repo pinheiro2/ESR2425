@@ -1257,6 +1257,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			}
 
 			NumberWatching := len(clients[contentName])
+			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
 
 			if NumberWatching < 1 {
 				// Do something else if count is 1 or less
