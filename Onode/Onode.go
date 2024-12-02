@@ -1248,17 +1248,18 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			contentName := parts[1]
 			// popOfRoute := parts[2]
 
-			for i, addr := range clients[contentName] {
+			for i, addr := range clientsName[contentName] {
 				log.Printf("Is %s  ==  %s ?", addr.String(), clientAddr.String())
 
 				if addr.String() == clientAddr.String() {
 					// Remove clientAddr by slicing out the element
 					clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
+					clientsName[contentName] = append(clientsName[contentName][:i], clientsName[contentName][i+1:]...)
 					break
 				}
 			}
 
-			log.Printf("Clients list: %s ", clients[contentName])
+			log.Printf("Clients list: %s ", clientsName[contentName])
 
 			NumberWatching := len(clients[contentName])
 			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
@@ -1272,7 +1273,8 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				}
 
 				clientsMu.Lock()
-				delete(clients, contentName) // Removes contentName from map and releases memory
+				delete(clients, contentName)     // Removes contentName from map and releases memory
+				delete(clientsName, contentName) // Removes contentName from map and releases memory
 				clientsMu.Unlock()
 
 				delete(streams, contentName)
