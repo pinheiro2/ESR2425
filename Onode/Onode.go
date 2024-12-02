@@ -1256,6 +1256,24 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				}
 			}
 
+			NumberWatching := len(clients[contentName])
+
+			if NumberWatching < 1 {
+				// Do something else if count is 1 or less
+
+				ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
+				if err != nil {
+					log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
+				}
+
+				clientsMu.Lock()
+				delete(clients, contentName) // Removes contentName from map and releases memory
+				clientsMu.Unlock()
+
+				delete(streams, contentName)
+
+			}
+
 		case "UPDATE":
 			if len(parts) < 3 {
 				log.Printf("UPDATE command from client %s is missing data", clientAddr)
@@ -1309,6 +1327,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 							log.Printf("LIST OF CLIENTS: %v", clientsName[contentName])
 							sendEndStreamClientsCS(protocolConn, contentName, popOfRoute, clientsName)
+
 							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
 							if err != nil {
 								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
