@@ -549,15 +549,6 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 		command := parts[0]
 		switch command {
 
-		case "ENDSTREAM_UP":
-			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
-
-			if len(parts) < 2 {
-				log.Printf("ENDSTREAM_UP command from client %s is missing args", clientAddr)
-				continue
-			}
-			// contentName := parts[1]
-
 		case "ENDSTREAM":
 			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
@@ -884,6 +875,35 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
+
+		case "ENDSTREAM_UP":
+			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+
+			if len(parts) < 2 {
+				log.Printf("ENDSTREAM_UP command from client %s is missing args", clientAddr)
+				continue
+			}
+
+			contentName := parts[1]
+			popOfRoute := parts[2]
+
+			NumberWatching := len(clientsNode[contentName])
+
+			for i, addr := range clientsNode[contentName][popOfRoute] {
+				if addr.String() == clientAddr.String() {
+					// Remove clientAddr by slicing out the element
+					clientsNode[contentName][popOfRoute] = append(clientsNode[contentName][popOfRoute][:i], clientsNode[contentName][popOfRoute][i+1:]...)
+					break
+				}
+			}
+
+			if NumberWatching < 1 {
+				// Do something else if count is 1 or less
+				nextInRouteIp, _ := getNextInRouteAddr(routingTable[contentName])
+
+				sendEndStreamUp(protocolConn, nextInRouteIp, contentName, popOfRoute)
+
+			}
 
 		case "ENDSTREAM":
 
