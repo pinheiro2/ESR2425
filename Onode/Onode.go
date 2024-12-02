@@ -895,6 +895,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				}
 			}
 			NumberWatching := len(clientsNode[contentName])
+			log.Printf("Cients watching %s: %d ", contentName, NumberWatching)
 
 			if NumberWatching < 1 {
 				// Do something else if count is 1 or less
