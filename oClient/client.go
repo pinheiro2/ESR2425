@@ -290,7 +290,7 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 }
 
 func startFFPlay() (io.WriteCloser, error) {
-	ffplayCmd := exec.Command("ffplay", "-f", "mjpeg", "-i", "pipe:0")
+	ffplayCmd := exec.Command("ffplay", "-f", "mjpeg", "-i", "Stream Window")
 	ffplayIn, err := ffplayCmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create ffplay input pipe: %w", err)
