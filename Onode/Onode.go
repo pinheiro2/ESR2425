@@ -825,6 +825,8 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 					NumberWatching := len(clients[contentName])
 
 					if NumberWatching > 1 {
+						log.Printf("Clients watching: %d\n", NumberWatching)
+
 						// Find and remove clientAddr from clients[contentName]
 						for i, addr := range clients[contentName] {
 							if addr.String() == clientAddr.String() {
