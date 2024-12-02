@@ -305,7 +305,7 @@ func calculateScores(metrics map[string]PathMetrics, maxAvgTime, maxJitter float
 
 		metrics[key] = metric
 
-		//fmt.Printf("Path: %s Score: %f\n", key, metric.Score)
+		fmt.Printf("Path: %s \nDelay:%f Jitter:%f Score: %f\n", key, metric.AverageDelay, metric.AverageJitter, metric.Score)
 	}
 
 	return metrics
@@ -713,8 +713,8 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 		case "PERFTEST":
 
-			response := []byte("pong")
-			_, err = protocolConn.WriteTo(response, clientAddr)
+			response := fmt.Sprintf("PERFREPORT %f %f %f", bestMetric.AverageDelay, bestMetric.AverageJitter, bestMetric.SuccessRate)
+			_, err = protocolConn.WriteTo([]byte(response), clientAddr)
 			if err != nil {
 				fmt.Printf("Error sending response to %s: %v\n", clientAddr, err)
 			}
