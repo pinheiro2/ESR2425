@@ -809,7 +809,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			}
 			contentName := parts[1]
 			popOfRoute := parts[2]
-			log.Printf("Clients to send endstream: %v ", clientsNode[contentName])
+			log.Printf("Clients to send endstream: %v ", clientsName[contentName])
 
 			sendEndStreamClientsNode(protocolConn, contentName, popOfRoute, clientsName[contentName])
 
@@ -888,7 +888,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				clientsName[contentName] = make(map[string][]net.UDPAddr)
 			}
 			clientsMu.Unlock()
-			nextInRouteIp, err := getNextInRouteAddr(routingTable[clientName])
+			nextInRouteIp, err := getNextInRouteAddr(neighbors[clientName])
 			if err != nil {
 			}
 
