@@ -1057,7 +1057,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 				continue
 			}
 
-			//popOfRoute := parts[1]
+			popOfRoute := parts[1]
 
 			updateDataString := strings.Join(parts[2:], " ") // Extract the JSON data
 			updateData := []byte(updateDataString)
@@ -1066,7 +1066,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 			if handleError(json.Unmarshal(updateData, &newRoutes), "Failed to parse UPDATE data from client %s", clientAddr) {
 				continue
 			}
-			log.Printf("Received UPDATE from %s: %v", clientAddr, newRoutes)
+			log.Printf("Received UPDATE from %s for POP %s", clientAddr, popOfRoute)
 
 		case "REQUEST":
 			if len(parts) < 2 {
