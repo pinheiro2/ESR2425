@@ -324,7 +324,7 @@ func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffpl
 
 			// Read from the current connection
 			n, _, err := activeConn.ReadFrom(buf)
-			log.Println("Read buffer %d.", n)
+			log.Printf("Read buffer %d.", n)
 
 			if err != nil {
 				if isTimeoutError(err) {
