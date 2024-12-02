@@ -64,6 +64,7 @@ var (
 	videos              map[string]string
 	clients             map[string][]net.Addr
 	clientsNode         map[string]map[string][]net.Addr
+	clientsName         map[string]map[string][]net.UDPAddr
 	clientsMu           sync.Mutex // Mutex to protect the client list
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex        // Mutex to protect streamConnectionsIn
@@ -443,6 +444,47 @@ func addClientAddressNode(contentName string, popOfRoute string, clientAddr net.
 	log.Printf("New client connected from %s for content \"%s\"", popOfRoute, contentName)
 }
 
+func addClientName(contentName string, clientName string, clientsIp map[string][]net.UDPAddr, mu *sync.Mutex, node Node) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	clientIP, err := getNextInRouteAddr(node.Neighbors[clientName])
+	if err != nil {
+	}
+
+	log.Printf("adding client %s for content \"%s\"", *clientIP, contentName)
+
+	// Check if the client address already exists for the given content
+	for _, c := range clientsIp[contentName] {
+		if c.String() == clientIP.String() {
+			log.Printf("Existing client %s reconnected for content \"%s\"", clientIP, contentName)
+			return
+		}
+	}
+
+	// Add the client address to the list
+	clientsIp[contentName] = append(clientsIp[contentName], *clientIP)
+	log.Printf("New client connected from %s for content \"%s\"", clientIP, contentName)
+}
+
+func addClientNameNode(contentName string, popOfRoute string, clientIP net.UDPAddr, clientsName map[string]map[string][]net.UDPAddr, mu *sync.Mutex) {
+	mu.Lock()
+	defer mu.Unlock()
+	log.Printf("New client %v", clientIP)
+
+	// Check if the client address already exists for the given content
+	for _, c := range clientsName[contentName][popOfRoute] {
+		if c.String() == clientIP.String() {
+			log.Printf("Existing client %s reconnected for content from %s \"%s\"", clientIP, popOfRoute, contentName)
+			return
+		}
+	}
+
+	// Add the client address to the list
+	clientsName[contentName][popOfRoute] = append(clientsName[contentName][popOfRoute], clientIP)
+	log.Printf("New client connected from %s for content \"%s\"", popOfRoute, contentName)
+}
+
 func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string, popOfRoute string) {
 	// Initialize probingState and expectedID
 	probingState := &ProbingState{
@@ -586,7 +628,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				streamConnMu.Unlock()
 
 				// Send the content request to the appropriate stream connection
-				err = sendContentRequest(streamConnIn, contentName, popOfRoute) // escrever na porta 8000 do vizinho
+				err = sendContentRequest(streamConnIn, contentName, popOfRoute, node.Name) // escrever na porta 8000 do vizinho
 				if err != nil {
 					log.Printf("Failed to request content \"%s\" for client %s: %v", contentName, clientAddr, err)
 					continue // Skip forwarding if content request fails
@@ -732,6 +774,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 	}
 
 	clientsNode := make(map[string]map[string][]net.Addr)
+	clientsName := make(map[string]map[string][]net.UDPAddr)
 
 	buf := make([]byte, 1024)
 
@@ -833,14 +876,23 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			}
 			contentName := parts[1]
 			popOfRoute := parts[2]
+			clientName := parts[3]
 
-			log.Printf("REQUEST for content \"%s\" from client %s", popOfRoute, clientAddr)
+			log.Printf("REQUEST for content \"%s\" from POP %s from client %s", contentName, popOfRoute, clientName)
 
 			clientsMu.Lock()
 			if _, exists := clientsNode[contentName]; !exists {
 				clientsNode[contentName] = make(map[string][]net.Addr)
 			}
+			if _, exists := clientsName[contentName]; !exists {
+				clientsName[contentName] = make(map[string][]net.UDPAddr)
+			}
 			clientsMu.Unlock()
+			nextInRouteIp, err := getNextInRouteAddr(routingTable[clientName])
+			if err != nil {
+			}
+
+			addClientNameNode(contentName, popOfRoute, *nextInRouteIp, clientsName, &clientsMu)
 
 			addClientAddressNode(contentName, popOfRoute, clientAddr, clientsNode, &clientsMu)
 
@@ -869,7 +921,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				streamConnMu.Unlock()
 
 				// Send the content request to the appropriate stream connection
-				err = sendContentRequest(streamConnIn, contentName, popOfRoute) // escrever na porta 8000 do vizinho
+				err = sendContentRequest(streamConnIn, contentName, popOfRoute, node.Name) // escrever na porta 8000 do vizinho
 				if err != nil {
 					log.Printf("Failed to request content \"%s\" for client %s: %v", popOfRoute, clientAddr, err)
 					continue // Skip forwarding if content request fails
@@ -918,13 +970,13 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 	}
 }
 
-func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string) error {
+func sendContentRequest(conn *net.UDPConn, contentName string, popOfRoute string, nodeName string) error {
 
 	if conn == nil {
 		return fmt.Errorf("connection is nil; cannot send request for content: %s", contentName)
 	}
 	// Prefix the content name with "Request:"
-	message := "REQUEST " + contentName + " " + popOfRoute
+	message := "REQUEST " + contentName + " " + popOfRoute + " " + nodeName
 
 	// Send the request message
 	_, err := conn.Write([]byte(message))
@@ -955,7 +1007,7 @@ func sendEndStreamClientsNode(conn *net.UDPConn, contentName string, popOfRoute 
 		}
 	}
 }
-func sendEndStreamClientsCS(conn *net.UDPConn, contentName string, popOfRoute string, clients map[string][]net.Addr) {
+func sendEndStreamClientsCS(conn *net.UDPConn, contentName string, popOfRoute string, clientsName map[string][]net.UDPAddr) {
 	// Check if there are any clients for the given contentName
 
 	clientAddrs, exists := clients[contentName]
@@ -1027,6 +1079,7 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 	}()
 
 	clients := make(map[string][]net.Addr)
+	clientsName := make(map[string][]net.UDPAddr)
 
 	buf := make([]byte, 1024)
 	for {
@@ -1076,10 +1129,13 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 			contentName := parts[1]
 			popOfRoute := parts[2]
-
-			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
+			clientName := parts[3]
 
 			// TODO: change routing to node name
+
+			log.Printf("REQUEST for content \"%s\" from POP %s from client %s", contentName, popOfRoute, clientName)
+
+			addClientName(contentName, clientName, clientsName, &clientsMu, *node)
 
 			addClientAddress(contentName, clientAddr, clients, &clientsMu)
 
@@ -1092,8 +1148,6 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 				defer cleanup()
 
-				log.Printf("LIST OF CLIENTS: %s", clients[contentName])
-
 				// Send RTP packets and handle errors
 				go func() {
 					err := sendRTPPackets(conn, reader, contentName, clients)
@@ -1102,7 +1156,9 @@ func (node *Node) handleConnectionsCS(conn *net.UDPConn, streams map[string]*buf
 
 						// Catch if stream has ended
 						if err.Error() == "end of stream reached" {
-							sendEndStreamClientsCS(conn, contentName, popOfRoute, clients)
+
+							log.Printf("LIST OF CLIENTS: %s", clientsName[contentName])
+							sendEndStreamClientsCS(conn, contentName, popOfRoute, clientsName)
 							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
 							if err != nil {
 								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
