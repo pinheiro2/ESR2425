@@ -1249,6 +1249,8 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			// popOfRoute := parts[2]
 
 			for i, addr := range clients[contentName] {
+				log.Printf("Is %s  ==  %s ?", addr.String(), clientAddr.String())
+
 				if addr.String() == clientAddr.String() {
 					// Remove clientAddr by slicing out the element
 					clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
