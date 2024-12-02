@@ -530,6 +530,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 		command := parts[0]
 		switch command {
 		case "ENDSTREAM":
+			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
 			if len(parts) < 2 {
 				log.Printf("ENDSTREAM command from client %s is missing args", clientAddr)
