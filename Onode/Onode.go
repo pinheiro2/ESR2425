@@ -548,6 +548,32 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 		// Parse the command and handle each case
 		command := parts[0]
 		switch command {
+
+		case "ENDSTREAM_UP":
+			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+
+			if len(parts) < 2 {
+				log.Printf("ENDSTREAM_UP command from client %s is missing args", clientAddr)
+				continue
+			}
+			contentName := parts[1]
+
+			NumberWatching := len(clients[contentName])
+
+			if NumberWatching > 1 {
+				// Find and remove clientAddr from clients[contentName]
+				for i, addr := range clients[contentName] {
+					if addr.String() == clientAddr.String() {
+						// Remove clientAddr by slicing out the element
+						clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
+						break
+					}
+				}
+			} else {
+				// Do something else if count is 1 or less
+				fmt.Println("One or no entries exist for", contentName)
+			}
+
 		case "ENDSTREAM":
 			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
