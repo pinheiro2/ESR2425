@@ -305,7 +305,7 @@ func startFFPlay() (io.WriteCloser, error) {
 	return ffplayIn, nil
 }
 
-func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffplayIn io.WriteCloser, stop chan struct{}) {
+func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffplayIn io.WriteCloser, stop chan struct{}, done chan struct{}) {
 	packet := &rtp.Packet{}
 
 	for {
@@ -335,6 +335,13 @@ func receiveAndDisplayRTPPackets(conn **net.UDPConn, connMutex *sync.Mutex, ffpl
 				}
 				log.Printf("Error reading from UDP: %v", err)
 				continue
+			}
+
+			// Check for zero bytes read
+			if n == 0 {
+				log.Println("Zero bytes read, signaling done channel.")
+				close(done)
+				return
 			}
 
 			if err := packet.Unmarshal(buf[:n]); err != nil {
@@ -506,15 +513,14 @@ func main() {
 	}
 	defer ffplayIn.Close()
 
+	stop := make(chan struct{})
 	done := make(chan struct{})
 
 	// Start receiving and displaying RTP packets
-	go receiveAndDisplayRTPPackets(&conn, &connMutex, ffplayIn, done)
+	go receiveAndDisplayRTPPackets(&conn, &connMutex, ffplayIn, stop, done)
 
 	// Wait for the stream to end or the ffplay process to exit
-	select {
-	case <-done:
-		log.Println("Stream ended, shutting down.")
-	}
+	<-done
+	log.Println("Stream ended, shutting down.")
 
 }
