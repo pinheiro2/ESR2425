@@ -250,7 +250,7 @@ func (n *Node) sendProbing(protocolConn *net.UDPConn, neighborName string, probi
 
 	finalMessage := append([]byte("PROBING "), probingData...)
 	// Send the probing data to the neighbor
-	log.Printf("Sending probing to neighbor: %s from node: %s", neighborName, n.Name)
+	// log.Printf("Sending probing to neighbor: %s from node: %s", neighborName, n.Name)
 	_, err = protocolConn.WriteTo(finalMessage, addr)
 	if err != nil {
 		return fmt.Errorf("failed to send probing: %v", err)
