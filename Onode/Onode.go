@@ -1317,6 +1317,19 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				continue
 			}
 
+			stopChansMu.Lock()
+
+			if len(stopChans) == 0 {
+				log.Println("No active stop channels.")
+				return
+			}
+
+			log.Println("Active stop channels:")
+			for contentName := range stopChans {
+				log.Printf("Content: %s", contentName)
+			}
+			stopChansMu.Unlock()
+
 			contentName := parts[1]
 			// popOfRoute := parts[2]
 
