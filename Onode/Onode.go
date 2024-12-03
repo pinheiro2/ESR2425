@@ -1280,6 +1280,9 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 	clients = make(map[string][]net.Addr)
 	clientsName = make(map[string][]net.UDPAddr)
+	stopChans = make(map[string]chan struct{})
+
+	var stopChanOnce sync.Once
 
 	buf := make([]byte, 1024)
 	for {
@@ -1300,10 +1303,8 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			continue
 		}
 
-		stopChans = make(map[string]chan struct{})
 		// var stopChansMu sync.Mutex
 
-		var stopChanOnce sync.Once
 		// stopChan := make(chan struct{})
 		// Parse the command and handle each case
 		command := parts[0]
@@ -1317,25 +1318,30 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				continue
 			}
 
-			stopChansMu.Lock()
-
-			if len(stopChans) == 0 {
-				log.Println("No active stop channels.")
-				return
-			}
-
-			log.Println("Active stop channels:")
-			for contentName := range stopChans {
-				log.Printf("Content: %s", contentName)
-			}
-			stopChansMu.Unlock()
-
 			contentName := parts[1]
 			// popOfRoute := parts[2]
 
 			// Close the stopChan only once
 			stopChanOnce.Do(func() {
-				stopForwarding(contentName)
+				stopChansMu.Lock()
+
+				if len(stopChans) == 0 {
+					log.Println("No active stop channels.")
+					return
+				}
+
+				log.Println("Active stop channels:")
+				for contentName := range stopChans {
+					log.Printf("Content: %s", contentName)
+				}
+
+				if stopChan, exists := stopChans[contentName]; exists {
+					log.Printf("Found %s to stop", contentName)
+
+					close(stopChan)                // Signal the goroutine to stop
+					delete(stopChans, contentName) // Clean up the map entry
+				}
+				stopChansMu.Unlock()
 			})
 
 			for i, addr := range clientsName[contentName] {
@@ -1418,6 +1424,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				stopChansMu.Lock()
 				if _, exists := stopChans[contentName]; !exists {
 					stopChans[contentName] = make(chan struct{})
+					log.Printf("Created new stop channel for content: %s", contentName)
 				}
 				stopChan := stopChans[contentName]
 
