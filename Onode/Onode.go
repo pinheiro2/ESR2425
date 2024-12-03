@@ -943,9 +943,6 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			delete(clientsNode, contentName) // Removes contentName from map and releases memory
 			clientsMu.Unlock()
 
-			// Close the stopChan only once
-			stopForwarding(contentName)
-
 			NumberWatching := len(clientsNode[contentName])
 
 			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
@@ -957,7 +954,10 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 				streamConnMu.Lock()                      // Lock the mutex to ensure safe access to the shared resource
 				delete(streamConnectionsIn, contentName) // Remove the entry for the specified contentName
-				streamConnMu.Unlock()                    // Unlock the mutex after modifying the map
+				streamConnMu.Unlock()
+				// Unlock the mutex after modifying the map
+				// Close the stopChan only once
+				stopForwarding(contentName)
 
 				sendEndStreamUp(protocolConn, nextInRouteIp, contentName, popOfRoute)
 
