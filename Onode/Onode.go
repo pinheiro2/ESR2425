@@ -1337,7 +1337,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				if err != nil {
 					log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
 				}
-
+				stopChansMu.Lock()
 				if stopChan, exists := stopChans[contentName]; exists {
 					log.Printf("Found %s to stop", contentName)
 
