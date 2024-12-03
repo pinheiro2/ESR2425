@@ -1314,7 +1314,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 		case "ENDSTREAM_UP":
 			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
-			if len(parts) < 2 {
+			if len(parts) < 3 {
 				log.Printf("ENDSTREAM_UP command from client %s is missing args", clientAddr)
 				continue
 			}
@@ -1527,8 +1527,8 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 					log.Printf("Failed to send packet to %v: %v", client, err)
 				} else {
 					// Log packet details after successful send
-					// log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-					// 	client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+					log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+						client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
 				}
 			}
 			clientsMu.Unlock() // Unlock the client list
