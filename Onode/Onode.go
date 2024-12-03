@@ -852,9 +852,8 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 						sendEndStreamUp(protocolConn, nextInRouteIp, contentName, node.Name)
 
 					}
-
+					log.Printf("The client: %s is no longer alive\n", clientAddrStr)
 				}
-				log.Printf("The client: %s is no longer alive\n", clientAddrStr)
 
 				clientsAliveMu.Unlock()
 			}(clientAddrStr)
