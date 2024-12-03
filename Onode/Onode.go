@@ -527,7 +527,6 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 	stopChans = make(map[string]chan struct{})
 	// var stopChansMu sync.Mutex
 
-	var stopChanOnce sync.Once
 	// stopChan := make(chan struct{})
 	buf := make([]byte, 1024)
 
@@ -848,9 +847,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 						streamConnMu.Unlock()                    // Unlock the mutex after modifying the map
 
 						// Close the stopChan only once
-						stopChanOnce.Do(func() {
-							stopForwarding(contentName)
-						})
+						stopForwarding(contentName)
 
 						sendEndStreamUp(protocolConn, nextInRouteIp, contentName, node.Name)
 
@@ -903,7 +900,6 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 	stopChans = make(map[string]chan struct{})
 	// var stopChansMu sync.Mutex
 
-	var stopChanOnce sync.Once
 	// stopChan := make(chan struct{})
 	buf := make([]byte, 1024)
 
@@ -948,9 +944,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			clientsMu.Unlock()
 
 			// Close the stopChan only once
-			stopChanOnce.Do(func() {
-				stopForwarding(contentName)
-			})
+			stopForwarding(contentName)
 
 			NumberWatching := len(clientsNode[contentName])
 
@@ -1282,8 +1276,6 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 	clientsName = make(map[string][]net.UDPAddr)
 	stopChans = make(map[string]chan struct{})
 
-	var stopChanOnce sync.Once
-
 	buf := make([]byte, 1024)
 	for {
 		n, clientAddr, err := protocolConn.ReadFrom(buf)
@@ -1322,27 +1314,26 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			// popOfRoute := parts[2]
 
 			// Close the stopChan only once
-			stopChanOnce.Do(func() {
-				stopChansMu.Lock()
 
-				if len(stopChans) == 0 {
-					log.Println("No active stop channels.")
-					return
-				}
+			stopChansMu.Lock()
 
-				log.Println("Active stop channels:")
-				for contentName := range stopChans {
-					log.Printf("Content: %s", contentName)
-				}
+			if len(stopChans) == 0 {
+				log.Println("No active stop channels.")
+				return
+			}
 
-				if stopChan, exists := stopChans[contentName]; exists {
-					log.Printf("Found %s to stop", contentName)
+			log.Println("Active stop channels:")
+			for contentName := range stopChans {
+				log.Printf("Content: %s", contentName)
+			}
 
-					close(stopChan)                // Signal the goroutine to stop
-					delete(stopChans, contentName) // Clean up the map entry
-				}
-				stopChansMu.Unlock()
-			})
+			if stopChan, exists := stopChans[contentName]; exists {
+				log.Printf("Found %s to stop", contentName)
+
+				delete(stopChans, contentName) // Clean up the map entry
+				close(stopChan)                // Signal the goroutine to stop
+			}
+			stopChansMu.Unlock()
 
 			for i, addr := range clientsName[contentName] {
 				log.Printf("Is %s  ==  %s ?", addr.String(), clientAddr.String())
@@ -1426,7 +1417,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 					stopChans[contentName] = make(chan struct{})
 					log.Printf("Created new stop channel for content: %s", contentName)
 				}
-				stopChan := stopChans[contentName]
+				// stopChan := stopChans[contentName]
 
 				if len(stopChans) == 0 {
 					log.Println("No active stop channels.")
@@ -1444,7 +1435,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 				// Send RTP packets and handle errors
 				go func() {
-					err := sendRTPPackets(protocolConn, reader, contentName, clients, stopChan)
+					err := sendRTPPackets(protocolConn, reader, contentName, clients, stopChans[contentName])
 					if err != nil {
 						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
