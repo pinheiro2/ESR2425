@@ -808,7 +808,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 				clientsAliveMu.Lock()
 				lastTimestamp, exists := clientsAlive[addr]
-				if exists && now.Sub(lastTimestamp) > 15*time.Second {
+				if exists && now.Sub(lastTimestamp) > 8*time.Second {
 
 					delete(clientsAlive, addr)
 
