@@ -1327,14 +1327,6 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				log.Printf("Content: %s", contentName)
 			}
 
-			if stopChan, exists := stopChans[contentName]; exists {
-				log.Printf("Found %s to stop", contentName)
-
-				delete(stopChans, contentName) // Clean up the map entry
-				close(stopChan)                // Signal the goroutine to stop
-			}
-			stopChansMu.Unlock()
-
 			for i, addr := range clientsName[contentName] {
 				log.Printf("Is %s  ==  %s ?", addr.String(), clientAddr.String())
 
@@ -1358,6 +1350,14 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				if err != nil {
 					log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
 				}
+
+				if stopChan, exists := stopChans[contentName]; exists {
+					log.Printf("Found %s to stop", contentName)
+
+					delete(stopChans, contentName) // Clean up the map entry
+					close(stopChan)                // Signal the goroutine to stop
+				}
+				stopChansMu.Unlock()
 
 				clientsMu.Lock()
 				delete(clients, contentName)     // Removes contentName from map and releases memory
