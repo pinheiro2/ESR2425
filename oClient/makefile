@@ -12,14 +12,14 @@ all: client
 
 # Run the Client
 client:
-	$(GO) run $(CLIENT) -stream $(STREAM)
+	$(GO) run $(CLIENT) -stream $(STREAM) -config $(CONFIG)
 
 # Explicit targets for different clients
 client1:
 	$(MAKE) client STREAM=stream1
 
 client2:
-	$(MAKE) client STREAM=stream1
+	$(MAKE) client STREAM=stream1 CONFIG=pops_O7.json
 
 client3:
 	$(MAKE) client STREAM=stream3
