@@ -1320,50 +1320,41 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			}
 
 			contentName := parts[1]
-			// popOfRoute := parts[2]
+			popOfRoute := parts[2]
 
-			// for i, addr := range clientsName[contentName] {
-			// 	log.Printf("Is %s  ==  %s ?", addr.String(), clientAddr.String())
+			clientsMu.Lock()
+			delete(clientsNode[contentName], popOfRoute) // Removes contentName from map and releases memory
+			clientsMu.Unlock()
 
-			// 	if addr.String() == clientAddr.String() {
-			// 		// Remove clientAddr by slicing out the element
-			// 		clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
-			// 		clientsName[contentName] = append(clientsName[contentName][:i], clientsName[contentName][i+1:]...)
-			// 		break
-			// 	}
-			// }
+			NumberWatching := len(clientsNode[contentName])
 
-			log.Printf("Clients list: %s ", clientsName[contentName])
-
-			NumberWatching := len(clients[contentName])
 			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
 
-			// if NumberWatching < 1 {
-			// 	// Do something else if count is 1 or less
+			if NumberWatching < 1 {
+				// Do something else if count is 1 or less
 
-			// 	ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
-			// 	if err != nil {
-			// 		log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
-			// 	}
+				ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
+				if err != nil {
+					log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
+				}
 
-			// 	if stopChan, exists := stopChans[contentName]; exists {
-			// 		log.Printf("Found %s to stop", contentName)
+				if stopChan, exists := stopChans[contentName]; exists {
+					log.Printf("Found %s to stop", contentName)
 
-			// 		delete(stopChans, contentName) // Clean up the map entry
-			// 		close(stopChan)                // Signal the goroutine to stop
-			// 	}
-			// 	stopChansMu.Unlock()
+					delete(stopChans, contentName) // Clean up the map entry
+					close(stopChan)                // Signal the goroutine to stop
+				}
+				stopChansMu.Unlock()
 
-			// 	clientsMu.Lock()
-			// 	delete(clients, contentName)     // Removes contentName from map and releases memory
-			// 	delete(clientsName, contentName) // Removes contentName from map and releases memory
-			// 	clientsMu.Unlock()
+				clientsMu.Lock()
+				delete(clients, contentName) // Removes contentName from map and releases memory
+				clientsMu.Unlock()
 
-			// 	delete(streams, contentName)
+				delete(streams, contentName)
 
-			// 	log.Printf("Stream reader is: %v", streams[contentName])
+				log.Printf("Stream reader is: %v", streams[contentName])
 
-			// }
+			}
 
 		case "UPDATE":
 			if len(parts) < 3 {
