@@ -1258,6 +1258,18 @@ func sendEndStream(conn *net.UDPConn, udpAddr *net.UDPAddr, contentName string, 
 	log.Printf("ENDSTREAM content: %s sent to %v\n", contentName, targetAddr)
 	return nil
 }
+func resetTicker(stopCh chan struct{}, ticker *time.Ticker) {
+	// // Stop the old ticker and notify the goroutine to restart
+	// ticker.Stop()
+	// log.Println("Old ticker stopped")
+
+	// // Create a new ticker with a shorter interval, e.g., 1 second
+	// ticker = time.NewTicker(1 * time.Second)
+	// log.Println("New ticker started with 1 second interval")
+
+	// Signal the goroutine to start reading from the new ticker
+	stopCh <- struct{}{} // Signal goroutine to reset and start with the new ticker
+}
 
 func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
 
@@ -1272,11 +1284,28 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 	node.initializeProbing(protocolConn, 3, probeID)
 	probeID++ // Incrementa o ID após a primeira chamada
 
-	// Goroutine para executar initializeProbing periodicamente
+	// Create a stop channel to signal the goroutine to reset the ticker
+	stopCh := make(chan struct{})
+
 	go func() {
-		for range ticker.C {
-			node.initializeProbing(protocolConn, 3, probeID)
-			probeID++ // Incrementa o ID após cada chamada
+		for {
+			select {
+			case <-ticker.C:
+				// Periodic call to initializeProbing
+				node.initializeProbing(protocolConn, 3, probeID)
+				probeID++ // Increment probeID after each call
+			case <-stopCh:
+				// Wait for the signal to restart with the new ticker
+				log.Println("Goroutine received signal to reset the ticker")
+				ticker.Stop()
+				log.Println("Old ticker stopped")
+
+				// Create a new ticker with a shorter interval, e.g., 1 second
+				ticker = time.NewTicker(30 * time.Second)
+				log.Println("New ticker started with 1 second interval")
+
+				continue
+			}
 		}
 	}()
 
@@ -1310,6 +1339,36 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 		command := parts[0]
 
 		switch command {
+
+		case "PROBING":
+			// log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+
+			var probing Probing
+			err := json.Unmarshal([]byte(parts[1]), &probing)
+			if err != nil {
+				log.Printf("Error unmarshalling probing message: %v", err)
+				continue
+			}
+			log.Printf("Probing with ID: %d  mine is: %d", probing.Id, probeID)
+
+			//se for a primeira vez que recebe um probing o expectedId deve ser igual ao id do probing que recebe
+			if probeID <= probing.Id {
+				// Reset the ticker when probeID < probing.Id
+				log.Printf("probeID (%d) <= probing.Id (%d), resetting ticker...", probeID, probing.Id)
+				// Reset probeID to match the probing ID and set expectedID to the same
+				probeID = probing.Id
+				// expectedID = probing.Id
+
+				// Call resetTicker to stop and start a new ticker
+				resetTicker(stopCh, ticker)
+
+				// Initialize probing immediately
+				node.initializeProbing(protocolConn, 3, probing.Id)
+				probeID++
+			}
+
+			// Ignore messages with unexpected IDs
+
 		case "ENDSTREAM_UP":
 			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
