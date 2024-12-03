@@ -19,7 +19,7 @@ client1:
 	$(MAKE) client STREAM=stream1
 
 client2:
-	$(MAKE) client STREAM=stream1 CONFIG=pops_O7.json
+	$(MAKE) client STREAM=stream1 
 
 client3:
 	$(MAKE) client STREAM=stream3
@@ -27,7 +27,11 @@ client3:
 client4:
 	$(MAKE) client STREAM=stream2
 
+client7:
+	$(MAKE) client STREAM=stream1 CONFIG=pops_O7.json
 
+client8:
+	$(MAKE) client STREAM=stream1 CONFIG=pops_O8.json
 # Clean target (optional, doesn't do much in this case but placeholder for future extensions)
 clean:
 	@echo "Clean up completed."
