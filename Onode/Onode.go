@@ -803,7 +803,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 
 			// Start a goroutine for cleanup specific to this client
 			go func(addr string) {
-				time.Sleep(15 * time.Second) // Wait 15 seconds
+				time.Sleep(8 * time.Second) // Wait 15 seconds
 				now := time.Now()
 
 				clientsAliveMu.Lock()

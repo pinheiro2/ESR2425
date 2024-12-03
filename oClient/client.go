@@ -436,7 +436,7 @@ func main() {
 	}
 
 	// Create a ticker that ticks every minute (60 seconds)
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	// Best node switching logic in the ticker goroutine
