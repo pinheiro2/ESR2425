@@ -410,10 +410,10 @@ func sendAliveMessage(conn *net.UDPConn) {
 func main() {
 	// Define the port flag and parse the command-line arguments
 	stream := flag.String("stream", "stream1", "stream to connect to")
-	//popIp := flag.String("pop-ip", "0.0.0.0", "IP to connect to POP for testing")
+	popFile := flag.String("config", "pops.json", "Config File with pops")
 	//port := flag.Int("port", 8000, "UDP port to connect to on the server")
 	flag.Parse()
-	nodes, err := loadNodesFromFile("pops.json")
+	nodes, err := loadNodesFromFile(*popFile)
 	if err != nil {
 		fmt.Printf("Error loading nodes: %v\n", err)
 		os.Exit(1)
