@@ -3,6 +3,7 @@ GO := go
 CLIENT := client.go
 POP_IP := 10.0.11.2
 STREAM := $(or $(stream), stream1) # Default value is 'stream1'
+CONFIG := pops.json
 
 # Targets
 .PHONY: all client clean
