@@ -1281,7 +1281,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 		}
 	}()
 
-	clients = make(map[string][]net.Addr)
+	clientsNode = make(map[string]map[string][]net.Addr)
 	clientsName = make(map[string][]net.UDPAddr)
 	stopChans = make(map[string]chan struct{})
 
@@ -1396,7 +1396,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 			addClientName(contentName, clientName, clientsName, &clientsMu, *node)
 
-			addClientAddress(contentName, clientAddr, clients, &clientsMu)
+			addClientAddressNode(contentName, popOfRoute, clientAddr, clientsNode, &clientsMu)
 
 			if streams[contentName] == nil {
 				reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
@@ -1430,7 +1430,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 				// Send RTP packets and handle errors
 				go func() {
-					err := sendRTPPackets(protocolConn, reader, contentName, clients, stopChans[contentName])
+					err := sendRTPPackets(protocolConn, reader, contentName, popOfRoute, clientsNode, stopChans[contentName])
 					if err != nil {
 						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
@@ -1463,7 +1463,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 	}
 }
 
-func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, clients map[string][]net.Addr, stopChan chan struct{}) error {
+func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, popOfRoute string, clients map[string]map[string][]net.Addr, stopChan chan struct{}) error {
 	seqNumber := uint16(0)
 	ssrc := uint32(1234)
 	payloadType := uint8(96) // Dynamic payload type for video
@@ -1525,7 +1525,7 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 			}
 
 			clientsMu.Lock() // Lock the client list for safe access
-			for _, client := range clients[contentName] {
+			for _, client := range clients[contentName][popOfRoute] {
 
 				_, err := conn.WriteTo(packetData, client)
 				if err != nil {
