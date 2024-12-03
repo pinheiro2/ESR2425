@@ -504,30 +504,39 @@ func addClientNameNode(contentName string, popOfRoute string, clientIP net.UDPAd
 }
 
 func sendEndStreamToClients() {
-	// Create a UDP connection to the new port for sending "ENDSTREAM"
-	conn, err := net.DialUDP("udp", nil, &net.UDPAddr{
-		IP:   net.ParseIP("255.255.255.255"), // Use broadcast address (or specific IP if needed)
-		Port: 80000,
-	})
-	if err != nil {
-		log.Fatalf("Error creating UDP connection to new port: %v", err)
-	}
-	defer conn.Close()
+	// Define the new port where the "ENDSTREAM" message should be sent
+	const newPort = 80000
 
-	// Lock clients map to safely iterate
+	// Lock clients map to safely iterate over the clients' IP addresses
 	clientsMu.Lock()
-	defer clientsMu.Unlock()
 
+	// Iterate over the clients map, which contains the contentName as key and client IP as value
 	for contentName, clientAddr := range clients {
+		// Create a UDP address for the client, but with the new port (80000)
+		clientUDPAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:%d", clientAddr, newPort)) // Use the new port here
+		if err != nil {
+			log.Printf("Error resolving UDP address for client %s: %v", clientAddr, err)
+			continue
+		}
+
+		// Create the UDP connection to the specific client address and new port
+		conn, err := net.DialUDP("udp", nil, clientUDPAddr)
+		if err != nil {
+			log.Printf("Error creating UDP connection to client %s on new port %d: %v", clientAddr, newPort, err)
+			continue
+		}
+		defer conn.Close()
+
 		// Prepare the ENDSTREAM message
 		message := "ENDSTREAM"
-		_, err := conn.Write([]byte(message))
+		_, err = conn.Write([]byte(message))
 		if err != nil {
 			log.Printf("Error sending ENDSTREAM message to client %s: %v", clientAddr, err)
 			continue
 		}
-		log.Printf("Sent ENDSTREAM message to client %s (%s)", contentName, clientAddr)
+		log.Printf("Sent ENDSTREAM message to client %s (%s) on port %d", contentName, clientAddr, newPort)
 	}
+	defer clientsMu.Unlock()
 }
 
 func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string, popOfRoute string) {
