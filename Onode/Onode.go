@@ -64,7 +64,7 @@ var (
 	videos              map[string]string
 	clients             map[string][]net.Addr
 	clientsNode         map[string]map[string][]net.Addr
-	clientsName         map[string]map[string][]net.UDPAddr
+	clientsName         map[string][]net.UDPAddr
 	clientsMu           sync.Mutex // Mutex to protect the client list
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex        // Mutex to protect streamConnectionsIn
@@ -1267,8 +1267,8 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 		}
 	}()
 
-	clients := make(map[string][]net.Addr)
-	clientsName := make(map[string][]net.UDPAddr)
+	clients = make(map[string][]net.Addr)
+	clientsName = make(map[string][]net.UDPAddr)
 
 	buf := make([]byte, 1024)
 	for {
