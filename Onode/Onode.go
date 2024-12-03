@@ -1281,7 +1281,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 		}
 	}()
 
-	clients = make(map[string][]net.Addr)
+	clientsNode = make(map[string]map[string][]net.Addr)
 	clientsName = make(map[string][]net.UDPAddr)
 	stopChans = make(map[string]chan struct{})
 
@@ -1320,36 +1320,14 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			}
 
 			contentName := parts[1]
-			// popOfRoute := parts[2]
+			popOfRoute := parts[2]
 
-			// Close the stopChan only once
+			clientsMu.Lock()
+			delete(clientsNode[contentName], popOfRoute) // Removes contentName from map and releases memory
+			clientsMu.Unlock()
 
-			stopChansMu.Lock()
+			NumberWatching := len(clientsNode[contentName])
 
-			if len(stopChans) == 0 {
-				log.Println("No active stop channels.")
-				return
-			}
-
-			log.Println("Active stop channels:")
-			for contentName := range stopChans {
-				log.Printf("Content: %s", contentName)
-			}
-
-			for i, addr := range clientsName[contentName] {
-				log.Printf("Is %s  ==  %s ?", addr.String(), clientAddr.String())
-
-				if addr.String() == clientAddr.String() {
-					// Remove clientAddr by slicing out the element
-					clients[contentName] = append(clients[contentName][:i], clients[contentName][i+1:]...)
-					clientsName[contentName] = append(clientsName[contentName][:i], clientsName[contentName][i+1:]...)
-					break
-				}
-			}
-
-			log.Printf("Clients list: %s ", clientsName[contentName])
-
-			NumberWatching := len(clients[contentName])
 			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
 
 			if NumberWatching < 1 {
@@ -1359,7 +1337,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				if err != nil {
 					log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
 				}
-
+				stopChansMu.Lock()
 				if stopChan, exists := stopChans[contentName]; exists {
 					log.Printf("Found %s to stop", contentName)
 
@@ -1369,8 +1347,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				stopChansMu.Unlock()
 
 				clientsMu.Lock()
-				delete(clients, contentName)     // Removes contentName from map and releases memory
-				delete(clientsName, contentName) // Removes contentName from map and releases memory
+				delete(clients, contentName) // Removes contentName from map and releases memory
 				clientsMu.Unlock()
 
 				delete(streams, contentName)
@@ -1406,11 +1383,15 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			popOfRoute := parts[2]
 			clientName := parts[3]
 
+			if _, exists := clientsNode[contentName]; !exists {
+				clientsNode[contentName] = make(map[string][]net.Addr)
+			}
+
 			log.Printf("REQUEST for content \"%s\" from POP %s from client %s", contentName, popOfRoute, node.Neighbors[clientName])
 
 			addClientName(contentName, clientName, clientsName, &clientsMu, *node)
 
-			addClientAddress(contentName, clientAddr, clients, &clientsMu)
+			addClientAddressNode(contentName, popOfRoute, clientAddr, clientsNode, &clientsMu)
 
 			if streams[contentName] == nil {
 				reader, cleanup, err := startFFmpeg(ffmpegCommands, contentName)
@@ -1444,7 +1425,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 				// Send RTP packets and handle errors
 				go func() {
-					err := sendRTPPackets(protocolConn, reader, contentName, clients, stopChans[contentName])
+					err := sendRTPPackets(protocolConn, reader, contentName, popOfRoute, clientsNode, stopChans[contentName])
 					if err != nil {
 						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
@@ -1477,7 +1458,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 	}
 }
 
-func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, clients map[string][]net.Addr, stopChan chan struct{}) error {
+func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, popOfRoute string, clients map[string]map[string][]net.Addr, stopChan chan struct{}) error {
 	seqNumber := uint16(0)
 	ssrc := uint32(1234)
 	payloadType := uint8(96) // Dynamic payload type for video
@@ -1539,7 +1520,7 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 			}
 
 			clientsMu.Lock() // Lock the client list for safe access
-			for _, client := range clients[contentName] {
+			for _, client := range clients[contentName][popOfRoute] {
 
 				_, err := conn.WriteTo(packetData, client)
 				if err != nil {
