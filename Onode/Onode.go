@@ -872,6 +872,19 @@ func stopForwarding(contentName string) {
 	log.Printf("Stopping forwarding of %s", contentName)
 
 	stopChansMu.Lock()
+	defer stopChansMu.Unlock()
+
+	if len(stopChans) == 0 {
+		log.Println("No active stop channels.")
+		return
+	}
+
+	log.Println("Active stop channels:")
+	for contentName := range stopChans {
+		log.Printf("Content: %s", contentName)
+	}
+
+	stopChansMu.Lock()
 	if stopChan, exists := stopChans[contentName]; exists {
 		log.Printf("Found %s to stop", contentName)
 
@@ -1289,6 +1302,11 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			continue
 		}
 
+		stopChans = make(map[string]chan struct{})
+		// var stopChansMu sync.Mutex
+
+		var stopChanOnce sync.Once
+		// stopChan := make(chan struct{})
 		// Parse the command and handle each case
 		command := parts[0]
 
@@ -1303,6 +1321,11 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 			contentName := parts[1]
 			// popOfRoute := parts[2]
+
+			// Close the stopChan only once
+			stopChanOnce.Do(func() {
+				stopForwarding(contentName)
+			})
 
 			for i, addr := range clientsName[contentName] {
 				log.Printf("Is %s  ==  %s ?", addr.String(), clientAddr.String())
@@ -1381,30 +1404,49 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 				defer cleanup()
 
+				stopChansMu.Lock()
+				if _, exists := stopChans[contentName]; !exists {
+					stopChans[contentName] = make(chan struct{})
+				}
+				stopChan := stopChans[contentName]
+
+				log.Printf("Saving channel for content %s, chan: %v", contentName, stopChan)
+
+				stopChansMu.Unlock()
+
+				// Forward the stream to the client
+
 				// Send RTP packets and handle errors
 				go func() {
-					err := sendRTPPackets(protocolConn, reader, contentName, clients)
-					if err != nil {
-						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
+					select {
+					case <-stopChan:
+						// Stop signal received, terminate the goroutine
+						log.Printf("Stopping Sending From ENDSTREAM_UP")
+						return
+					default:
+						err := sendRTPPackets(protocolConn, reader, contentName, clients)
+						if err != nil {
+							log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
-						// Catch if stream has ended
-						if err.Error() == "end of stream reached" {
+							// Catch if stream has ended
+							if err.Error() == "end of stream reached" {
 
-							log.Printf("LIST OF CLIENTS: %v", clientsName[contentName])
-							sendEndStreamClientsCS(protocolConn, contentName, popOfRoute, clientsName)
+								log.Printf("LIST OF CLIENTS: %v", clientsName[contentName])
+								sendEndStreamClientsCS(protocolConn, contentName, popOfRoute, clientsName)
 
-							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
-							if err != nil {
-								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
+								ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
+								if err != nil {
+									log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
+								}
+
+								clientsMu.Lock()
+								delete(clients, contentName) // Removes contentName from map and releases memory
+								clientsMu.Unlock()
+
+								delete(streams, contentName)
+								defer cleanup()
+
 							}
-
-							clientsMu.Lock()
-							delete(clients, contentName) // Removes contentName from map and releases memory
-							clientsMu.Unlock()
-
-							delete(streams, contentName)
-							defer cleanup()
-
 						}
 					}
 				}()
