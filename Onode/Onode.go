@@ -939,8 +939,8 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 			// Stops sending
 			clientsMu.Lock()
-			delete(clientsName, contentName) // Removes contentName from map and releases memory
-			delete(clientsNode, contentName) // Removes contentName from map and releases memory
+			delete(clientsName[contentName], popOfRoute) // Removes contentName from map and releases memory
+			delete(clientsNode[contentName], popOfRoute) // Removes contentName from map and releases memory
 			clientsMu.Unlock()
 
 			NumberWatching := len(clientsNode[contentName])
