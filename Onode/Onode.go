@@ -1444,35 +1444,28 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 				// Send RTP packets and handle errors
 				go func() {
-					select {
-					case <-stopChan:
-						// Stop signal received, terminate the goroutine
-						log.Printf("Stopping Sending From ENDSTREAM_UP")
-						return
-					default:
-						err := sendRTPPackets(protocolConn, reader, contentName, clients)
-						if err != nil {
-							log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
+					err := sendRTPPackets(protocolConn, reader, contentName, clients, stopChan)
+					if err != nil {
+						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
-							// Catch if stream has ended
-							if err.Error() == "end of stream reached" {
+						// Catch if stream has ended
+						if err.Error() == "end of stream reached" {
 
-								log.Printf("LIST OF CLIENTS: %v", clientsName[contentName])
-								sendEndStreamClientsCS(protocolConn, contentName, popOfRoute, clientsName)
+							log.Printf("LIST OF CLIENTS: %v", clientsName[contentName])
+							sendEndStreamClientsCS(protocolConn, contentName, popOfRoute, clientsName)
 
-								ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
-								if err != nil {
-									log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
-								}
-
-								clientsMu.Lock()
-								delete(clients, contentName) // Removes contentName from map and releases memory
-								clientsMu.Unlock()
-
-								delete(streams, contentName)
-								defer cleanup()
-
+							ffmpegCommands[contentName], err = prepareFFmpegCommand(videos[contentName])
+							if err != nil {
+								log.Fatalf("Error creating ffmpeg for content \"%s\": %v", contentName, err)
 							}
+
+							clientsMu.Lock()
+							delete(clients, contentName) // Removes contentName from map and releases memory
+							clientsMu.Unlock()
+
+							delete(streams, contentName)
+							defer cleanup()
+
 						}
 					}
 				}()
@@ -1484,78 +1477,87 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 	}
 }
 
-func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, clients map[string][]net.Addr) error {
+func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, clients map[string][]net.Addr, stopChan chan struct{}) error {
 	seqNumber := uint16(0)
 	ssrc := uint32(1234)
 	payloadType := uint8(96) // Dynamic payload type for video
 	maxBufferSize := 65535   // Maximum allowable RTP payload size
 
 	for {
-		// Read one frame from the reader
-		var buf bytes.Buffer
-		for {
-			b, err := reader.ReadByte()
-			if err != nil {
-				if err == io.EOF {
-					log.Println("End of stream reached.")
-					return fmt.Errorf("end of stream reached")
+
+		select {
+		case <-stopChan:
+			// Stop signal received, terminate the goroutine
+			log.Printf("Stopping Sending From ENDSTREAM_UP")
+			return nil
+		default:
+			// Read one frame from the reader
+			var buf bytes.Buffer
+			for {
+
+				b, err := reader.ReadByte()
+				if err != nil {
+					if err == io.EOF {
+						log.Println("End of stream reached.")
+						return fmt.Errorf("end of stream reached")
+					}
+					log.Printf("Error reading byte: %v", err)
+					return fmt.Errorf("error reading byte: %w", err)
 				}
-				log.Printf("Error reading byte: %v", err)
-				return fmt.Errorf("error reading byte: %w", err)
+
+				buf.WriteByte(b)
+
+				// Detect end of JPEG frame (FF D9 marks the end of a JPEG frame)
+				if buf.Len() > 2 && buf.Bytes()[buf.Len()-2] == 0xFF && buf.Bytes()[buf.Len()-1] == 0xD9 {
+					break
+				}
+
+				// Check buffer size to prevent overflows
+				if buf.Len() > maxBufferSize {
+					log.Printf("Frame exceeds max buffer size (%d bytes). Discarding.", maxBufferSize)
+					return fmt.Errorf("frame exceeds max buffer size (%d bytes)", maxBufferSize)
+				}
 			}
 
-			buf.WriteByte(b)
-
-			// Detect end of JPEG frame (FF D9 marks the end of a JPEG frame)
-			if buf.Len() > 2 && buf.Bytes()[buf.Len()-2] == 0xFF && buf.Bytes()[buf.Len()-1] == 0xD9 {
-				break
+			// Construct the RTP packet
+			packet := &rtp.Packet{
+				Header: rtp.Header{
+					Marker:         true, // Indicates the end of a frame
+					PayloadType:    payloadType,
+					SequenceNumber: seqNumber,
+					Timestamp:      uint32(time.Now().UnixNano() / 1e6), // Current timestamp in milliseconds
+					SSRC:           ssrc,                                // Synchronization source identifier
+				},
+				Payload: buf.Bytes(),
 			}
 
-			// Check buffer size to prevent overflows
-			if buf.Len() > maxBufferSize {
-				log.Printf("Frame exceeds max buffer size (%d bytes). Discarding.", maxBufferSize)
-				return fmt.Errorf("frame exceeds max buffer size (%d bytes)", maxBufferSize)
-			}
-		}
-
-		// Construct the RTP packet
-		packet := &rtp.Packet{
-			Header: rtp.Header{
-				Marker:         true, // Indicates the end of a frame
-				PayloadType:    payloadType,
-				SequenceNumber: seqNumber,
-				Timestamp:      uint32(time.Now().UnixNano() / 1e6), // Current timestamp in milliseconds
-				SSRC:           ssrc,                                // Synchronization source identifier
-			},
-			Payload: buf.Bytes(),
-		}
-
-		// Marshal the RTP packet into bytes
-		packetData, err := packet.Marshal()
-		if err != nil {
-			log.Printf("Failed to marshal RTP packet: %v", err)
-			return fmt.Errorf("failed to marshal RTP packet: %w", err)
-		}
-
-		clientsMu.Lock() // Lock the client list for safe access
-		for _, client := range clients[contentName] {
-
-			_, err := conn.WriteTo(packetData, client)
+			// Marshal the RTP packet into bytes
+			packetData, err := packet.Marshal()
 			if err != nil {
-				log.Printf("Failed to send packet to %v: %v", client, err)
-			} else {
-				// Log packet details after successful send
-				// log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-				// 	client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+				log.Printf("Failed to marshal RTP packet: %v", err)
+				return fmt.Errorf("failed to marshal RTP packet: %w", err)
 			}
+
+			clientsMu.Lock() // Lock the client list for safe access
+			for _, client := range clients[contentName] {
+
+				_, err := conn.WriteTo(packetData, client)
+				if err != nil {
+					log.Printf("Failed to send packet to %v: %v", client, err)
+				} else {
+					// Log packet details after successful send
+					// log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
+					// 	client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
+				}
+			}
+			clientsMu.Unlock() // Unlock the client list
+
+			// Increment sequence number for the next packet
+			seqNumber++
+
+			// Wait for the next frame (approximately 30 FPS)
+			time.Sleep(time.Millisecond * 33)
 		}
-		clientsMu.Unlock() // Unlock the client list
-
-		// Increment sequence number for the next packet
-		seqNumber++
-
-		// Wait for the next frame (approximately 30 FPS)
-		time.Sleep(time.Millisecond * 33)
 	}
 }
 
