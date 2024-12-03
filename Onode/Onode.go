@@ -1056,6 +1056,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				clientsName[contentName] = make(map[string][]net.UDPAddr)
 			}
 			clientsMu.Unlock()
+
 			nextInRouteIp, err := getNextInRouteAddr(neighbors[clientName])
 			if err != nil {
 			}
@@ -1104,6 +1105,9 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				// Forward the stream to the client
 				go forwardToClientsNode(protocolConn, streamConnIn, clientsNode[contentName], stopChan)
 			} else {
+
+				err = sendContentRequest(streamConnIn, contentName, popOfRoute, node.Name) // escrever na porta 8000 do vizinho
+
 				log.Printf("Reusing existing connection for POP \"%s\"", popOfRoute)
 			}
 
