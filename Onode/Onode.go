@@ -69,6 +69,8 @@ var (
 	streamConnectionsIn map[string]*net.UDPConn
 	streamConnMu        sync.Mutex        // Mutex to protect streamConnectionsIn
 	routingTable        map[string]string //Roting Table
+	stopChans           map[string]chan struct{}
+	stopChansMu         sync.Mutex
 )
 
 // Updated getAllNames Function
@@ -522,7 +524,11 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 	}
 
 	clients := make(map[string][]net.Addr)
+	stopChans = make(map[string]chan struct{})
+	// var stopChansMu sync.Mutex
 
+	var stopChanOnce sync.Once
+	// stopChan := make(chan struct{})
 	buf := make([]byte, 1024)
 
 	for {
@@ -625,6 +631,11 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				log.Printf("Content \"%s\" not found in the routing table. Skipping request from client %s", contentName, clientAddr)
 				continue
 			}
+
+			if _, exists := streamConnectionsIn[contentName]; !exists {
+				log.Printf("Content \"%s\" not found in the Conn In.", contentName)
+			}
+
 			log.Printf("REQUEST for content \"%s\" from client %s", contentName, clientAddr)
 
 			addClientAddress(contentName, clientAddr, clients, &clientsMu)
@@ -656,9 +667,15 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 				}
 
 				log.Printf("New connection established for content \"%s\"", contentName)
+				stopChansMu.Lock()
+				if _, exists := stopChans[contentName]; !exists {
+					stopChans[contentName] = make(chan struct{})
+				}
+				stopChan := stopChans[contentName]
+				stopChansMu.Unlock()
 
 				// Forward the stream to the client
-				go forwardToClients(protocolConn, streamConnIn, contentName, clients)
+				go forwardToClients(protocolConn, streamConnIn, contentName, clients, stopChan)
 			} else {
 				log.Printf("Reusing existing connection for content \"%s\"", contentName)
 			}
@@ -830,6 +847,11 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 						delete(streamConnectionsIn, contentName) // Remove the entry for the specified contentName
 						streamConnMu.Unlock()                    // Unlock the mutex after modifying the map
 
+						// Close the stopChan only once
+						stopChanOnce.Do(func() {
+							stopForwarding(contentName)
+						})
+
 						sendEndStreamUp(protocolConn, nextInRouteIp, contentName, node.Name)
 
 					}
@@ -846,6 +868,19 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 	}
 }
 
+func stopForwarding(contentName string) {
+	log.Printf("Stopping forwarding of %s", contentName)
+
+	stopChansMu.Lock()
+	if stopChan, exists := stopChans[contentName]; exists {
+		log.Printf("Found %s to stop", contentName)
+
+		close(stopChan)                // Signal the goroutine to stop
+		delete(stopChans, contentName) // Clean up the map entry
+	}
+	stopChansMu.Unlock()
+}
+
 func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string) {
 	// Initialize the map if it's nil
 	if streamConnectionsIn == nil {
@@ -854,7 +889,11 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 	clientsNode := make(map[string]map[string][]net.Addr)
 	clientsName := make(map[string]map[string][]net.UDPAddr)
+	stopChans = make(map[string]chan struct{})
+	// var stopChansMu sync.Mutex
 
+	var stopChanOnce sync.Once
+	// stopChan := make(chan struct{})
 	buf := make([]byte, 1024)
 
 	for {
@@ -897,6 +936,11 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			delete(clientsNode, contentName) // Removes contentName from map and releases memory
 			clientsMu.Unlock()
 
+			// Close the stopChan only once
+			stopChanOnce.Do(func() {
+				stopForwarding(contentName)
+			})
+
 			NumberWatching := len(clientsNode[contentName])
 
 			log.Printf("Clients watching %s: %d ", contentName, NumberWatching)
@@ -905,7 +949,6 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 				// Do something else if count is 1 or less
 				nextInRouteIp, _ := getNextInRouteAddr(routingTable[popOfRoute])
-				log.Printf("ENDSTREAM_UP content: %s sent to %v\n", contentName, nextInRouteIp)
 
 				streamConnMu.Lock()                      // Lock the mutex to ensure safe access to the shared resource
 				delete(streamConnectionsIn, contentName) // Remove the entry for the specified contentName
@@ -1039,8 +1082,17 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 
 				log.Printf("New connection established for content \"%s\"", popOfRoute)
 
+				stopChansMu.Lock()
+				if _, exists := stopChans[contentName]; !exists {
+					stopChans[contentName] = make(chan struct{})
+				}
+				stopChan := stopChans[contentName]
+				stopChansMu.Unlock()
+
+				// go forwardToClientsNode(conn, contentConn, clients, stopChan)
+
 				// Forward the stream to the client
-				go forwardToClientsNode(protocolConn, streamConnIn, clientsNode[contentName])
+				go forwardToClientsNode(protocolConn, streamConnIn, clientsNode[contentName], stopChan)
 			} else {
 				log.Printf("Reusing existing connection for POP \"%s\"", popOfRoute)
 			}
@@ -1452,9 +1504,39 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	log.Println("Setup UDP connection Successful")
 	return conn, nil
 }
+func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, clients map[string][]net.Addr, stopChan chan struct{}) {
+	buf := make([]byte, 150000)
+	for {
+		select {
+		case <-stopChan:
+			// Stop signal received, terminate the goroutine
+			log.Printf("Stopping forwardToClientsNode")
+			return
+		default:
+			// Read data from the content connection
+			n, _, err := contentConn.ReadFromUDP(buf)
+			if err != nil {
+				log.Printf("Error reading from Content Server: %v", err)
+				return
+			}
+
+			// Forward data to all clients
+			clientsMu.Lock()
+			for _, clientAddrs := range clients {
+				for _, clientAddr := range clientAddrs {
+					_, err := conn.WriteTo(buf[:n], clientAddr)
+					if err != nil {
+						log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
+					}
+				}
+			}
+			clientsMu.Unlock()
+		}
+	}
+}
 
 // Forwards data from Node to connected nodes
-func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, clients map[string][]net.Addr) {
+func forwardToClientsNode_old(conn *net.UDPConn, contentConn *net.UDPConn, clients map[string][]net.Addr) {
 	buf := make([]byte, 150000)
 	for {
 		n, _, err := contentConn.ReadFromUDP(buf)
@@ -1482,25 +1564,35 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, clients m
 }
 
 // Forwards data from POP to connected clients
-func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn, popOfRoute string, clients map[string][]net.Addr) {
+func forwardToClients(conn *net.UDPConn, contentConn *net.UDPConn, popOfRoute string, clients map[string][]net.Addr, stopChan chan struct{}) {
 	buf := make([]byte, 150000)
 	for {
-		n, _, err := contentConn.ReadFromUDP(buf)
-		if err != nil {
-			log.Printf("Error reading from Content Server: %v", err)
+
+		select {
+		case <-stopChan:
+			// Stop signal received, terminate the goroutine
+			log.Printf("Stopping forwardToClientsNode")
 			return
-		}
+		default:
 
-		//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
-
-		clientsMu.Lock()
-		for _, clientAddr := range clients[popOfRoute] {
-			_, err := conn.WriteTo(buf[:n], clientAddr)
+			n, _, err := contentConn.ReadFromUDP(buf)
 			if err != nil {
-				log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
-			} else {
-				//log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
+				log.Printf("Error reading from Content Server: %v", err)
+				return
 			}
+
+			//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
+
+			clientsMu.Lock()
+			for _, clientAddr := range clients[popOfRoute] {
+				_, err := conn.WriteTo(buf[:n], clientAddr)
+				if err != nil {
+					log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
+				} else {
+					//log.Printf("POP forwarded packet to %v - Size=%d bytes", clientAddr, n)
+				}
+			}
+
 		}
 		clientsMu.Unlock()
 	}
