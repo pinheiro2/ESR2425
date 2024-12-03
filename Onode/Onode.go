@@ -1392,6 +1392,10 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 			popOfRoute := parts[2]
 			clientName := parts[3]
 
+			if _, exists := clientsNode[contentName]; !exists {
+				clientsNode[contentName] = make(map[string][]net.Addr)
+			}
+
 			log.Printf("REQUEST for content \"%s\" from POP %s from client %s", contentName, popOfRoute, node.Neighbors[clientName])
 
 			addClientName(contentName, clientName, clientsName, &clientsMu, *node)
