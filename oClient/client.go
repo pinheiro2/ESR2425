@@ -407,6 +407,36 @@ func sendAliveMessage(conn *net.UDPConn) {
 	}
 }
 
+func getLocalIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
+func receiveEndStreamMessage(conn *net.UDPConn, stop chan struct{}) {
+	buf := make([]byte, 1024)
+	for {
+		// Read data from the UDP connection
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			log.Printf("Error receiving UDP packet: %v", err)
+			continue
+		}
+
+		// Check if the received message is "ENDSTREAM"
+		if string(buf[:n]) == "ENDSTREAM" {
+			fmt.Println("Received ENDSTREAM message, stopping the stream.")
+			close(stop) // Close the stop channel to signal the end of the stream
+			return
+		}
+	}
+}
+
 func main() {
 	// Define the port flag and parse the command-line arguments
 	stream := flag.String("stream", "stream1", "stream to connect to")
@@ -425,6 +455,10 @@ func main() {
 	var bestNode *Node
 	var previousBestNodeAddr string
 	testCount := 3
+
+	ip := getLocalIP()
+
+	receiveConn, _ := setupUDPConnection(ip, 8000)
 
 	//first time
 	testNodesMultipleTimes(nodes, testCount)
@@ -529,8 +563,14 @@ func main() {
 	// Start receiving and displaying RTP packets
 	go receiveAndDisplayRTPPackets(&conn, &connMutex, ffplayIn, stop, done)
 
-	// Wait for the stream to end or the ffplay process to exit
-	<-done
-	log.Println("Stream ended, shutting down.")
+	// Start the goroutine to listen for the "ENDSTREAM" message
+	go receiveEndStreamMessage(receiveConn, stop)
+
+	select {
+	case <-done:
+		log.Println("Stream ended, shutting down.")
+	case <-stop:
+		log.Println("ENDSTREAM received, stopping the stream.")
+	}
 
 }

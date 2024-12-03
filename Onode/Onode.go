@@ -503,6 +503,33 @@ func addClientNameNode(contentName string, popOfRoute string, clientIP net.UDPAd
 	log.Printf("New client connected from %s for content \"%s\"", popOfRoute, contentName)
 }
 
+func sendEndStreamToClients() {
+	// Create a UDP connection to the new port for sending "ENDSTREAM"
+	conn, err := net.DialUDP("udp", nil, &net.UDPAddr{
+		IP:   net.ParseIP("255.255.255.255"), // Use broadcast address (or specific IP if needed)
+		Port: 80000,
+	})
+	if err != nil {
+		log.Fatalf("Error creating UDP connection to new port: %v", err)
+	}
+	defer conn.Close()
+
+	// Lock clients map to safely iterate
+	clientsMu.Lock()
+	defer clientsMu.Unlock()
+
+	for contentName, clientAddr := range clients {
+		// Prepare the ENDSTREAM message
+		message := "ENDSTREAM"
+		_, err := conn.Write([]byte(message))
+		if err != nil {
+			log.Printf("Error sending ENDSTREAM message to client %s: %v", clientAddr, err)
+			continue
+		}
+		log.Printf("Sent ENDSTREAM message to client %s (%s)", contentName, clientAddr)
+	}
+}
+
 func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable map[string]string, neighbors map[string]string, popOfRoute string) {
 	// Initialize probingState and expectedID
 	probingState := &ProbingState{
@@ -567,7 +594,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			streamConnMu.Lock()                      // Lock the mutex to ensure safe access to the shared resource
 			delete(streamConnectionsIn, contentName) // Remove the entry for the specified contentName
 			streamConnMu.Unlock()                    // Unlock the mutex after modifying the map
-
+			sendEndStreamToClients()
 			clientsMu.Lock()
 			delete(clients, contentName) // Removes contentName from map and releases memory
 			clientsMu.Unlock()
