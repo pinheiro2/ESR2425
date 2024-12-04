@@ -71,7 +71,6 @@ var (
 	routingTable        map[string]string //Roting Table
 	stopChans           map[string]chan struct{}
 	stopChansMu         sync.Mutex
-	verboseFlag         bool
 )
 
 // Updated getAllNames Function
@@ -1146,9 +1145,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			for _, node := range probing.Nodes {
 				names = append(names, node.Name) // Collect all node names
 			}
-			if verboseFlag {
-				log.Printf("Sending probing to neighbor:%s coming from:%s", neighborsList, names)
-			}
+			//log.Printf("Sending probing to neighbor:%s coming from:%s", neighborsList, names)
 
 		default:
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
@@ -1773,12 +1770,7 @@ func main() {
 	ip := flag.String("ip", "0.0.0.0", "IP to open on for testing")
 	port := flag.Int("port", 8000, "UDP port to listen on")
 	nodeType := flag.String("type", "Node", "Node type (POP, Node, CS)")
-	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 	log.SetFlags(log.Ltime)
-
-	verboseFlag = *verbose
-
-	fmt.Printf("VERBOSE: %v", verboseFlag)
 
 	flag.Parse()
 
