@@ -470,7 +470,7 @@ func addClientName(contentName string, clientName string, clientsIp map[string][
 	if err != nil {
 	}
 
-	log.Printf("adding client %s for content \"%s\"", *clientIP, contentName)
+	log.Printf("Adding client %v for content \"%s\"", *clientIP, contentName)
 
 	// Check if the client address already exists for the given content
 	for _, c := range clientsIp[contentName] {
@@ -493,7 +493,7 @@ func addClientNameNode(contentName string, popOfRoute string, clientIP net.UDPAd
 	// Check if the client address already exists for the given content
 	for _, c := range clientsName[contentName][popOfRoute] {
 		if c.String() == clientIP.String() {
-			log.Printf("Existing client %s reconnected for content from %s \"%s\"", clientIP, popOfRoute, contentName)
+			log.Printf("Existing client %v reconnected for content from %s \"%s\"", clientIP, popOfRoute, contentName)
 			return
 		}
 	}
@@ -640,7 +640,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			addClientAddress(contentName, clientAddr, clients, &clientsMu)
 
 			streamConnMu.Lock()
-			streamConnIn, exists := streamConnectionsIn[contentName]
+			_, exists := streamConnectionsIn[contentName]
 			streamConnMu.Unlock()
 
 			log.Printf("LIST OF CLIENTS: %s", clients[contentName])
@@ -648,7 +648,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			if !exists {
 				// Connection doesn't exist, create a new one
 				var err error
-				streamConnIn, err = setupUDPConnection(routingTable[contentName], 8000)
+				streamConnIn, err := setupUDPConnection(routingTable[contentName], 8000)
 				if err != nil {
 					log.Fatalf("Error setting up UDP connection to %s for content \"%s\": %v", routingTable[contentName], contentName, err)
 				}
@@ -1068,7 +1068,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			streamConnIn, exists := streamConnectionsIn[contentName]
 			streamConnMu.Unlock()
 
-			log.Printf("LIST OF CLIENTS: %s", clientsName[contentName])
+			log.Printf("LIST OF CLIENTS: %v", clientsName[contentName])
 
 			if !exists {
 				// Connection doesn't exist, create a new one
@@ -1105,7 +1105,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 				go forwardToClientsNode(protocolConn, streamConnIn, clientsNode[contentName], stopChan)
 			} else {
 
-				err = sendContentRequest(streamConnIn, contentName, popOfRoute, node.Name) // escrever na porta 8000 do vizinho
+				sendContentRequest(streamConnIn, contentName, popOfRoute, node.Name) // escrever na porta 8000 do vizinho
 
 				log.Printf("Reusing existing connection for POP \"%s\"", popOfRoute)
 			}
@@ -1258,6 +1258,9 @@ func sendEndStream(conn *net.UDPConn, udpAddr *net.UDPAddr, contentName string, 
 	log.Printf("ENDSTREAM content: %s sent to %v\n", contentName, targetAddr)
 	return nil
 }
+func resetTicker(stopCh chan struct{}) {
+	stopCh <- struct{}{} // Signal goroutine to reset and start with the new ticker
+}
 
 func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[string]*bufio.Reader, ffmpegCommands map[string]*exec.Cmd) {
 
@@ -1272,11 +1275,28 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 	node.initializeProbing(protocolConn, 3, probeID)
 	probeID++ // Incrementa o ID após a primeira chamada
 
-	// Goroutine para executar initializeProbing periodicamente
+	// Create a stop channel to signal the goroutine to reset the ticker
+	stopCh := make(chan struct{})
+
 	go func() {
-		for range ticker.C {
-			node.initializeProbing(protocolConn, 3, probeID)
-			probeID++ // Incrementa o ID após cada chamada
+		for {
+			select {
+			case <-ticker.C:
+				// Periodic call to initializeProbing
+				node.initializeProbing(protocolConn, 3, probeID)
+				probeID++ // Increment probeID after each call
+			case <-stopCh:
+				// Wait for the signal to restart with the new ticker
+				log.Println("Goroutine received signal to reset the ticker")
+				ticker.Stop()
+				log.Println("Old ticker stopped")
+
+				// Create a new ticker with a shorter interval, e.g., 1 second
+				ticker = time.NewTicker(30 * time.Second)
+				log.Println("New ticker started with 1 second interval")
+
+				continue
+			}
 		}
 	}()
 
@@ -1310,6 +1330,36 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 		command := parts[0]
 
 		switch command {
+
+		case "PROBING":
+			// log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
+
+			var probing Probing
+			err := json.Unmarshal([]byte(parts[1]), &probing)
+			if err != nil {
+				log.Printf("Error unmarshalling probing message: %v", err)
+				continue
+			}
+			log.Printf("Probing with ID: %d  mine is: %d", probing.Id, probeID)
+
+			//se for a primeira vez que recebe um probing o expectedId deve ser igual ao id do probing que recebe
+			if probeID <= probing.Id {
+				// Reset the ticker when probeID < probing.Id
+				log.Printf("probeID (%d) <= probing.Id (%d), resetting ticker...", probeID, probing.Id)
+				// Reset probeID to match the probing ID and set expectedID to the same
+				probeID = probing.Id
+				// expectedID = probing.Id
+
+				// Call resetTicker to stop and start a new ticker
+				resetTicker(stopCh)
+
+				// Initialize probing immediately
+				node.initializeProbing(protocolConn, 3, probing.Id)
+				probeID++
+			}
+
+			// Ignore messages with unexpected IDs
+
 		case "ENDSTREAM_UP":
 			log.Printf("Received message \"%s\" from client %s", clientMessage, clientAddr)
 
@@ -1424,7 +1474,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 				// Send RTP packets and handle errors
 				go func() {
-					err := sendRTPPackets(protocolConn, reader, contentName, popOfRoute, clientsNode, stopChans[contentName])
+					err := sendRTPPackets(protocolConn, reader, contentName, clientsNode, stopChans[contentName])
 					if err != nil {
 						log.Printf("Error sending RTP packets to %v for content \"%s\": %v", clientAddr, contentName, err)
 
@@ -1457,7 +1507,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 	}
 }
 
-func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, popOfRoute string, clients map[string]map[string][]net.Addr, stopChan chan struct{}) error {
+func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string, clients map[string]map[string][]net.Addr, stopChan chan struct{}) error {
 	seqNumber := uint16(0)
 	ssrc := uint32(1234)
 	payloadType := uint8(96) // Dynamic payload type for video
@@ -1557,90 +1607,6 @@ func sendRTPPackets(conn *net.UDPConn, reader *bufio.Reader, contentName string,
 	}
 }
 
-func sendRTPPackets_old(conn *net.UDPConn, reader *bufio.Reader, contentName string, popOfRoute string, clients map[string]map[string][]net.Addr, stopChan chan struct{}) error {
-	seqNumber := uint16(0)
-	ssrc := uint32(1234)
-	payloadType := uint8(96) // Dynamic payload type for video
-	maxBufferSize := 65535   // Maximum allowable RTP payload size
-
-	for {
-
-		select {
-		case <-stopChan:
-			// Stop signal received, terminate the goroutine
-			log.Printf("Stopping Sending From ENDSTREAM_UP")
-			return nil
-		default:
-			// Read one frame from the reader
-			var buf bytes.Buffer
-			for {
-
-				b, err := reader.ReadByte()
-				if err != nil {
-					if err == io.EOF {
-						log.Println("End of stream reached.")
-						return fmt.Errorf("end of stream reached")
-					}
-					log.Printf("Error reading byte: %v", err)
-					return fmt.Errorf("error reading byte: %w", err)
-				}
-
-				buf.WriteByte(b)
-
-				// Detect end of JPEG frame (FF D9 marks the end of a JPEG frame)
-				if buf.Len() > 2 && buf.Bytes()[buf.Len()-2] == 0xFF && buf.Bytes()[buf.Len()-1] == 0xD9 {
-					break
-				}
-
-				// Check buffer size to prevent overflows
-				if buf.Len() > maxBufferSize {
-					log.Printf("Frame exceeds max buffer size (%d bytes). Discarding.", maxBufferSize)
-					return fmt.Errorf("frame exceeds max buffer size (%d bytes)", maxBufferSize)
-				}
-			}
-
-			// Construct the RTP packet
-			packet := &rtp.Packet{
-				Header: rtp.Header{
-					Marker:         true, // Indicates the end of a frame
-					PayloadType:    payloadType,
-					SequenceNumber: seqNumber,
-					Timestamp:      uint32(time.Now().UnixNano() / 1e6), // Current timestamp in milliseconds
-					SSRC:           ssrc,                                // Synchronization source identifier
-				},
-				Payload: buf.Bytes(),
-			}
-
-			// Marshal the RTP packet into bytes
-			packetData, err := packet.Marshal()
-			if err != nil {
-				log.Printf("Failed to marshal RTP packet: %v", err)
-				return fmt.Errorf("failed to marshal RTP packet: %w", err)
-			}
-
-			clientsMu.Lock() // Lock the client list for safe access
-			for _, client := range clients[contentName][popOfRoute] {
-
-				_, err := conn.WriteTo(packetData, client)
-				if err != nil {
-					log.Printf("Failed to send packet to %v: %v", client, err)
-				} else {
-					// Log packet details after successful send
-					log.Printf("Sent RTP packet to %v - Seq=%d, Timestamp=%d, Size=%d bytes",
-						client, packet.SequenceNumber, packet.Timestamp, len(packet.Payload))
-				}
-			}
-			clientsMu.Unlock() // Unlock the client list
-
-			// Increment sequence number for the next packet
-			seqNumber++
-
-			// Wait for the next frame (approximately 30 FPS)
-			time.Sleep(time.Millisecond * 33)
-		}
-	}
-}
-
 func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	serverAddr := net.UDPAddr{
 		Port: port,
@@ -1682,34 +1648,6 @@ func forwardToClientsNode(conn *net.UDPConn, contentConn *net.UDPConn, clients m
 			}
 			clientsMu.Unlock()
 		}
-	}
-}
-
-// Forwards data from Node to connected nodes
-func forwardToClientsNode_old(conn *net.UDPConn, contentConn *net.UDPConn, clients map[string][]net.Addr) {
-	buf := make([]byte, 150000)
-	for {
-		n, _, err := contentConn.ReadFromUDP(buf)
-		if err != nil {
-			log.Printf("Error reading from Content Server: %v", err)
-			return
-		}
-
-		//log.Printf("POP received packet from Content Server - Size=%d bytes", n)
-
-		clientsMu.Lock()
-		for _, clientAddrs := range clients {
-			for _, clientAddr := range clientAddrs {
-				_, err := conn.WriteTo(buf[:n], clientAddr)
-				if err != nil {
-					log.Printf("Failed to forward packet to %v: %v", clientAddr, err)
-				} else {
-					// Uncomment the next line for debugging purposes
-					// log.Printf("Node forwarded packet to %v - Size=%d bytes", clientAddr, n)
-				}
-			}
-		}
-		clientsMu.Unlock()
 	}
 }
 
@@ -1886,7 +1824,6 @@ func main() {
 		select {}
 
 	case "CS":
-		// Content Server: Stream video frames to any connecting POP nodes
 
 		videos = make(map[string]string)
 		streams := make(map[string]*bufio.Reader)

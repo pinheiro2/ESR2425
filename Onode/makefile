@@ -42,6 +42,9 @@ all: S1 O1 O2 O3 O4 O5 O6 O7 O8 n12 n13 n14 n15
 S1:
 	$(GO) run $(ONODE) -name S1 -ip 10.0.0.10 -type CS
 
+S2:
+	$(GO) run $(ONODE) -name S2 -ip 10.0.26.10 -type CS
+
 O1:
 	$(GO) run $(ONODE) -name O1 -ip 10.0.0.1 -type NODE
 

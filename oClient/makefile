@@ -17,16 +17,13 @@ client:
 
 # Explicit targets for different clients
 client1:
-	$(MAKE) client STREAM=stream1
+	$(MAKE) client STREAM=stream1 CONFIG=pops.json
 
 client2:
-	$(MAKE) client STREAM=stream1 
+	$(MAKE) client STREAM=stream2 CONFIG=pops.json
 
 client3:
-	$(MAKE) client STREAM=stream3
-
-client4:
-	$(MAKE) client STREAM=stream2
+	$(MAKE) client STREAM=stream3 CONFIG=pops.json
 
 client7:
 	$(MAKE) client STREAM=stream1 CONFIG=pops_O7.json
