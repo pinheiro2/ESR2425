@@ -437,6 +437,9 @@ func main() {
 	bestNode = findBestNode(nodes)
 	previousBestNodeAddr = bestNode.Address
 	previousBestNodeName = bestNode.Name
+	for _, node := range nodes {
+		log.Printf("POP %s, Score:%f\n", node.Name, node.Score)
+	}
 	log.Printf("Best POP %s\n", previousBestNodeName)
 
 	for _, node := range nodes {
