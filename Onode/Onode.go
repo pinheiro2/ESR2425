@@ -414,13 +414,13 @@ func calculateBestPath(probingState *ProbingState, oldPath string) (string, Path
 
 	key, metric := findBestPath(scores)
 
-	fmt.Printf("NEW best:%s Score:%f\n", key, metric.Score)
+	log.Printf("NEW best:%s Score:%f\n", key, metric.Score)
 
 	if oldPath != "" {
 		if metric.Score-scores[oldPath].Score < 0.1 {
 			key = oldPath
 			metric = scores[oldPath]
-			fmt.Printf("OLD best:%s Score:%f\n", key, metric.Score)
+			log.Printf("OLD best:%s Score:%f\n", key, metric.Score)
 
 		}
 	}
