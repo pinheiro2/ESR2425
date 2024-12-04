@@ -1776,11 +1776,11 @@ func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 	log.SetFlags(log.Ltime)
 
+	flag.Parse()
+
 	verboseFlag = *verbose
 
 	fmt.Printf("VERBOSE: %v", verboseFlag)
-
-	flag.Parse()
 
 	if *nodeName == "" {
 		log.Fatal("Node name not provided. Usage: go run node.go -name <NodeName> -port <Port> -type <Type>")
