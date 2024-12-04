@@ -104,7 +104,7 @@ func measureNodeResponse(node *Node, wg *sync.WaitGroup) {
 	// Create a UDP connection
 	conn, err := net.Dial("udp", addr)
 	if err != nil {
-		fmt.Printf("Failed to connect to %s: %v\n", node.Address, err)
+		log.Printf("Failed to connect to %s: %v\n", node.Address, err)
 		return
 	}
 	defer conn.Close()
@@ -115,7 +115,7 @@ func measureNodeResponse(node *Node, wg *sync.WaitGroup) {
 	// Send a UDP message
 	_, err = conn.Write(message)
 	if err != nil {
-		fmt.Printf("Failed to send message to %s: %v\n", node.Address, err)
+		log.Printf("Failed to send message to %s: %v\n", node.Address, err)
 		return
 	}
 
@@ -283,7 +283,7 @@ func setupUDPConnection(serverIP string, port int) (*net.UDPConn, error) {
 	// 	conn.Close()
 	// 	return nil, fmt.Errorf("failed to send connection request: %w", err)
 	// }
-	fmt.Println("Sent connection request to server")
+	log.Println("Sent connection request to server")
 	return conn, nil
 }
 
@@ -389,7 +389,7 @@ func sendContentRequest(conn *net.UDPConn, contentName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to send content name: %w", err)
 	}
-	fmt.Printf("Requested content: %s\n", contentName)
+	log.Printf("Requested content: %s\n", contentName)
 	return nil
 }
 
@@ -420,7 +420,7 @@ func main() {
 
 	nodes, err := loadNodesFromFile(*popFile)
 	if err != nil {
-		fmt.Printf("Error loading nodes: %v\n", err)
+		log.Printf("Error loading nodes: %v\n", err)
 		os.Exit(1)
 	}
 
