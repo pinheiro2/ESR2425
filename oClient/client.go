@@ -258,9 +258,9 @@ func findBestNode(nodes []*Node) *Node {
 		return nodes[i].Score > nodes[j].Score // Higher score is better
 	})
 
-	for _, node := range nodes {
-		fmt.Printf("POP:%s, Score:%f\n", node.Name, node.Score)
-	}
+	//for _, node := range nodes {
+	//	fmt.Printf("POP:%s, Score:%f\n", node.Name, node.Score)
+	//}
 
 	// Return the node with the highest score
 
@@ -452,7 +452,6 @@ func main() {
 			// Test nodes and find the best one
 			testNodesMultipleTimes(nodes, testCount)
 			bestNode = findBestNode(nodes)
-			fmt.Printf("Best node updated: %s\n", bestNode.Address)
 
 			// If the best node has changed, reinitialize the connection
 			if bestNode.Address != previousBestNodeAddr {
@@ -461,7 +460,12 @@ func main() {
 					if node.Address == previousBestNodeAddr {
 
 						if bestNode.Score-node.Score > 0.1 {
-							fmt.Printf("Best POP changed, reinitializing stream request to: %s\n", bestNode.Name)
+
+							for _, node := range nodes {
+								fmt.Printf("POP:%s, Score:%f\n", node.Name, node.Score)
+							}
+							log.Printf("Best POP updated to %s from %s\n", bestNode.Name, previousBestNodeName)
+							log.Printf("Best POP changed, reinitializing stream request to: %s\n", bestNode.Name)
 
 							connMutex.Lock()
 
