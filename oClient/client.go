@@ -19,6 +19,7 @@ import (
 )
 
 type Node struct {
+	Name                 string `json:"name"`
 	Address              string `json:"address"`
 	Port                 int
 	ResponseTimes        []time.Duration
@@ -33,6 +34,7 @@ type Node struct {
 }
 
 func loadNodesFromFile(filename string) ([]*Node, error) {
+	// Read the file contents
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %v", err)
@@ -45,12 +47,13 @@ func loadNodesFromFile(filename string) ([]*Node, error) {
 		return nil, fmt.Errorf("failed to unmarshal JSON: %v", err)
 	}
 
-	// Convert the map to a slice of Node pointers, only setting the Address field.
+	// Convert the map to a slice of Node pointers, setting both Name and Address fields.
 	var nodes []*Node
-	for _, address := range nodeMap {
+	for name, address := range nodeMap {
 		node := &Node{
-			Address: address,
-			Port:    8000,
+			Name:    name,    // Set the Name field
+			Address: address, // Set the Address field
+			Port:    8000,    // Default port
 		}
 		nodes = append(nodes, node)
 	}
@@ -222,11 +225,10 @@ func (n *Node) calculateScore(jitterWeight, avgTimeWeight, successWeight float64
 		(avgTimeWeight * (1 - normalizedAvgTime)) +
 		(successWeight * successRate)
 
-	if n.AverageTime == 0 {
+	if n.AverageTime == 0 || n.ResponseAverageDelay == 0 {
 		n.Score = 0
 	}
 
-	fmt.Printf("Score: %f\n", n.Score)
 }
 
 // Function to find the best node based on their computed scores
@@ -257,7 +259,7 @@ func findBestNode(nodes []*Node) *Node {
 	})
 
 	for _, node := range nodes {
-		fmt.Printf("Adress:%s, Score:%f\n", node.Address, node.Score)
+		fmt.Printf("POP:%s, Score:%f\n", node.Name, node.Score)
 	}
 
 	// Return the node with the highest score
@@ -424,13 +426,16 @@ func main() {
 
 	var bestNode *Node
 	var previousBestNodeAddr string
+	var previousBestNodeName string
 	testCount := 3
 
 	//first time
 	testNodesMultipleTimes(nodes, testCount)
 	bestNode = findBestNode(nodes)
-	fmt.Printf("Eu sou o melhor node: %s\n", bestNode.Address)
 	previousBestNodeAddr = bestNode.Address
+	previousBestNodeName = bestNode.Name
+	fmt.Printf("Eu sou o melhor POP: %s\n", previousBestNodeName)
+
 	for _, node := range nodes {
 		resetNodeMetrics(node)
 	}
@@ -454,7 +459,7 @@ func main() {
 					if node.Address == previousBestNodeAddr {
 
 						if bestNode.Score-node.Score > 0.1 {
-							fmt.Printf("Best node changed, reinitializing stream request to: %s\n", bestNode.Address)
+							fmt.Printf("Best POP changed, reinitializing stream request to: %s\n", bestNode.Name)
 
 							connMutex.Lock()
 
@@ -483,6 +488,7 @@ func main() {
 
 							// Update the previous best node address
 							previousBestNodeAddr = bestNode.Address
+							previousBestNodeName = bestNode.Name
 
 						}
 					}
