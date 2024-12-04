@@ -799,7 +799,7 @@ func (node *Node) handleConnectionsPOP(protocolConn *net.UDPConn, routingTable m
 			clientsAlive[clientAddrStr] = time.Now()
 			clientsAliveMu.Unlock()
 
-			log.Printf("Updated ALIVE timestamp for client: %s", clientAddrStr)
+			//log.Printf("Updated ALIVE timestamp for client: %s", clientAddrStr)
 
 			// Start a goroutine for cleanup specific to this client
 			go func(addr string) {
@@ -1273,6 +1273,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 	// Executa a primeira chamada imediatamente
 	node.initializeProbing(protocolConn, 3, probeID)
+	log.Printf()
 	probeID++ // Incrementa o ID após a primeira chamada
 
 	// Create a stop channel to signal the goroutine to reset the ticker
