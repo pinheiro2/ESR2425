@@ -874,7 +874,7 @@ func stopForwarding(contentName string) {
 		return
 	}
 
-	log.Println("Active stop channels:")
+	//log.Println("Active stop channels:")
 	for contentName := range stopChans {
 		log.Printf("Content: %s", contentName)
 	}
@@ -1454,7 +1454,7 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 				stopChansMu.Lock()
 				if _, exists := stopChans[contentName]; !exists {
 					stopChans[contentName] = make(chan struct{})
-					log.Printf("Created new stop channel for content: %s", contentName)
+					//log.Printf("Created new stop channel for content: %s", contentName)
 				}
 				// stopChan := stopChans[contentName]
 
