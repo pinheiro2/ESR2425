@@ -404,9 +404,10 @@ func sendAliveMessage(conn *net.UDPConn) {
 	_, err := conn.Write([]byte(aliveMessage))
 	if err != nil {
 		log.Printf("Error sending ALIVE message: %v", err)
-	} else {
-		log.Println("ALIVE message sent successfully.")
 	}
+	//else {
+	//	log.Println("ALIVE message sent successfully.")
+	//}
 }
 
 func main() {
@@ -436,7 +437,7 @@ func main() {
 	bestNode = findBestNode(nodes)
 	previousBestNodeAddr = bestNode.Address
 	previousBestNodeName = bestNode.Name
-	fmt.Printf("Eu sou o melhor POP: %s\n", previousBestNodeName)
+	//fmt.Printf("Eu sou o melhor POP: %s\n", previousBestNodeName)
 
 	for _, node := range nodes {
 		resetNodeMetrics(node)
@@ -462,7 +463,7 @@ func main() {
 						if bestNode.Score-node.Score > 0.1 {
 
 							for _, node := range nodes {
-								fmt.Printf("POP:%s, Score:%f\n", node.Name, node.Score)
+								log.Printf("POP %s, Score:%f\n", node.Name, node.Score)
 							}
 							log.Printf("Best POP updated to %s from %s\n", bestNode.Name, previousBestNodeName)
 							log.Printf("Best POP changed, reinitializing stream request to: %s\n", bestNode.Name)

@@ -1145,7 +1145,7 @@ func (node *Node) handleConnectionsNODE(protocolConn *net.UDPConn, routingTable 
 			for _, node := range probing.Nodes {
 				names = append(names, node.Name) // Collect all node names
 			}
-			log.Printf("Sending probing to neighbor:%s coming from:%s", neighborsList, names)
+			//log.Printf("Sending probing to neighbor:%s coming from:%s", neighborsList, names)
 
 		default:
 			log.Printf("Unknown message from %s: %s", clientAddr, clientMessage)
