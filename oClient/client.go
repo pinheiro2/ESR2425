@@ -415,6 +415,8 @@ func main() {
 	popFile := flag.String("config", "pops.json", "Config File with pops")
 	//port := flag.Int("port", 8000, "UDP port to connect to on the server")
 	flag.Parse()
+	log.SetFlags(log.Ltime)
+
 	nodes, err := loadNodesFromFile(*popFile)
 	if err != nil {
 		fmt.Printf("Error loading nodes: %v\n", err)
