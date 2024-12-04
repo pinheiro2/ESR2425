@@ -437,7 +437,7 @@ func main() {
 	bestNode = findBestNode(nodes)
 	previousBestNodeAddr = bestNode.Address
 	previousBestNodeName = bestNode.Name
-	//fmt.Printf("Eu sou o melhor POP: %s\n", previousBestNodeName)
+	fmt.Printf("Best POP %s\n", previousBestNodeName)
 
 	for _, node := range nodes {
 		resetNodeMetrics(node)
