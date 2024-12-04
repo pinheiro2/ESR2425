@@ -1273,7 +1273,6 @@ func (node *Node) handleConnectionsCS(protocolConn *net.UDPConn, streams map[str
 
 	// Executa a primeira chamada imediatamente
 	node.initializeProbing(protocolConn, 3, probeID)
-	log.Printf()
 	probeID++ // Incrementa o ID após a primeira chamada
 
 	// Create a stop channel to signal the goroutine to reset the ticker
