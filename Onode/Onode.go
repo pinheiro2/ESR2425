@@ -1761,7 +1761,7 @@ func sendUpdatePacket(conn *net.UDPConn, popOfRoute string, jsonData []byte, nex
 	if err != nil {
 		return fmt.Errorf("failed to send update: %w", err)
 	}
-	log.Printf("Sent update to %s\n", nextInRoute)
+	//log.Printf("Sent update to %s\n", nextInRoute)
 	return nil
 }
 
